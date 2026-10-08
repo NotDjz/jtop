@@ -2,7 +2,7 @@
 # Build the .deb and refresh the signed APT repo in docs/ (served by GitHub Pages).
 # Release a new version: bump VERSION, run ./build.sh, commit, push.
 set -e
-VERSION=1.0
+VERSION=1.1
 KEY=notdjz@users.noreply.github.com
 cd "$(dirname "$0")"
 

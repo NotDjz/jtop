@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """jtop: hardware components and live usage, htop style. Linux, stdlib only.
 
-Keys: Tab / 1 / 2 switch tab, ↑ ↓ PgUp PgDn scroll, q quit.
+Keys: Tab switch, ↑ ↓ scroll, q quit.
 Self-test: python3 jtop.py --check
 """
 import curses
@@ -110,7 +110,7 @@ def filesystems():
 
 def uptime():
     s = float(read("/proc/uptime", "0").split()[0])
-    return f"{int(s // 86400)}d {int(s % 86400 // 3600):02}:{int(s % 3600 // 60):02}"
+    return f"{int(s // 86400)}d {int(s % 86400 // 3600)}h {int(s % 3600 // 60):02}m"
 
 
 def components():
@@ -200,8 +200,7 @@ def usage_lines(w, prev, cur):
     dt = max(t1 - t0, 1e-3)
     pct = {k: 100 * act / max(tot, 1) for k, (act, tot) in deltas(cpu0, cpu1).items()}
 
-    load = " ".join(f"{x:.2f}" for x in os.getloadavg())
-    lines = [[], header("CPU", w), row("Total", pct.get("cpu", 0), w, extra=f"load {load}")]
+    lines = [[], header("CPU", w)]
     cores = sorted((k for k in pct if k != "cpu"), key=lambda k: int(k[3:]))
     cols = max(1, min(4, w // 45))
     cw = w // cols
@@ -248,7 +247,7 @@ def draw(scr, tab, scroll, lines, styles):
         label = f" {i + 1} {name} "
         scr.addnstr(0, x, label, max(w - x, 0), styles["tab_on" if i == tab else "tab_off"])
         x += len(label) + 1
-    info = f"{os.uname().nodename} · up {uptime()} · {time.strftime('%H:%M:%S')} "
+    info = f"host {os.uname().nodename} · uptime {uptime()} · {time.strftime('%H:%M:%S')} "
     if w - len(info) > x:
         scr.addstr(0, w - len(info), info, styles["dim"])
 
@@ -260,7 +259,7 @@ def draw(scr, tab, scroll, lines, styles):
             scr.addnstr(y, x, text, w - x, styles[style])
             x += len(text)
 
-    footer = " Tab/1/2 switch tab · ↑↓ PgUp PgDn scroll · q quit"
+    footer = " Tab switch · ↑↓ scroll · q quit"
     scr.addnstr(h - 1, 0, footer.ljust(w), w - 1, styles["tab_off"])
     scr.refresh()
 

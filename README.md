@@ -19,4 +19,4 @@ Then run `jtop`. Updates come with `sudo apt upgrade`.
 
 ## Keys
 
-`Tab` / `1` / `2` switch tab · `↑` `↓` `PgUp` `PgDn` scroll · `q` quit
+`Tab` switch · `↑` `↓` scroll · `q` quit
