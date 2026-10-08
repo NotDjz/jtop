@@ -6,6 +6,10 @@ Two tabs: **Components** (CPU, memory, motherboard, GPU, disks, network) and **U
 
 Linux only, Python 3 standard library, no dependencies.
 
+![Components tab](screenshots/components.png)
+
+![Usage tab](screenshots/usage.png)
+
 ## Install (Debian / Ubuntu)
 
 ```sh
