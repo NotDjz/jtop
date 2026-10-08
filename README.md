@@ -23,3 +23,5 @@ sudo apt install jtop
 ```
 
 Then run `jtop`. Updates come with `sudo apt upgrade`.
+
+For fun: `jtop --fun`

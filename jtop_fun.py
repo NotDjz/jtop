@@ -10,13 +10,14 @@ Self-test: python3 jtop_fun.py --check
 import collections
 import curses
 import itertools
+import math
 import os
 import random
 import sys
 import time
 
-from jtop import (bar, batteries, cpu_percent, cpu_times, deltas, human, init_styles, meminfo, proc_stat, put_line,
-                  read, sample, temps, uptime)
+from jtop import (TABS, bar, component_lines, components, cpu_times, init_styles, process_lines, put_line,
+                  sample, usage_lines)
 
 # A pane is a function (w, h, ctx) -> lines. Only the top-left pane and the CPU graph show real data.
 
@@ -27,6 +28,8 @@ FONT = {
     "A": [" ██ ", "█  █", "████", "█  █", "█  █"], "H": ["█  █", "█  █", "████", "█  █", "█  █"],
     "C": [" ███", "█   ", "█   ", "█   ", " ███"], "K": ["█  █", "█ █ ", "██  ", "█ █ ", "█  █"],
     "R": ["███ ", "█  █", "███ ", "█ █ ", "█  █"], " ": ["  "] * 5,
+    "L": ["█   ", "█   ", "█   ", "█   ", "████"], "O": [" ██ ", "█  █", "█  █", "█  █", " ██ "],
+    "W": ["█   █", "█   █", "█ █ █", "██ ██", "█   █"], "D": ["███ ", "█  █", "█  █", "█  █", "███ "],
 }
 GLITCH = "#@$%&*!?/\\<>=+"
 
@@ -36,12 +39,14 @@ def big(text):
 
 
 def banner(w, h, ctx):
-    for words in (["YES I'M", "A HACKER"], ["YES", "I'M A", "HACKER"]):
+    hello = ctx["frame"] // 50 % 4 == 3  # ~3 s of "HELLO WORLD" every ~12 s
+    layouts = [["HELLO", "WORLD"]] if hello else [["YES I'M", "A HACKER"], ["YES", "I'M A", "HACKER"]]
+    for words in layouts:
         rows = [r for word in words for r in big(word) + [""]][:-1]
         if max(map(len, rows)) <= w and len(rows) <= h:
             break
     else:
-        rows = ["YES I'M A HACKER"]
+        rows = ["HELLO WORLD" if hello else "YES I'M A HACKER"]
     color = ("good", "title", "crit", "warn")[ctx["frame"] // 8 % 4]
     lines = [[]] * ((h - len(rows)) // 2)
     for r in rows:
@@ -52,13 +57,19 @@ def banner(w, h, ctx):
     return lines
 
 
-def summary(w, h, ctx):
-    s = ctx["stats"]
-    lines = [bar("CPU  ", s["cpu"], w), bar("RAM  ", s["ram"], w), bar("TEMP ", s["temp"], w, value=f"{s['temp']:4.0f}°C")]
-    if s["bat"] is not None:
-        lines.append(bar("BAT  ", s["bat"], w, color="good"))
-    return lines + [[], [(f"▼ {human(s['rx'])}/s  ▲ {human(s['tx'])}/s", "good")],
-                    [(f"{s['procs']} processes · up {uptime()}", "dim")], [], [("q quit", "dim")]]
+def real_jtop(w, h, ctx):
+    """The real jtop, live, inside its little pane: Tab switches, arrows scroll, a toggles all in Processes."""
+    tabbar = []
+    for i, name in enumerate(TABS):
+        tabbar += [(f" {i + 1} {name} ", "tab_on" if i == ctx["tab"] else "tab_off"), (" ", "")]
+    if ctx["tab"] == 0:
+        content = component_lines(ctx["comps"], w)
+    elif ctx["tab"] == 1:
+        content = usage_lines(w, ctx["prev"], ctx["cur"])
+    else:
+        content = process_lines(w, ctx["prev"], ctx["cur"], ctx["show_all"])
+    ctx["scroll"] = max(0, min(ctx["scroll"], len(content) - (h - 1)))
+    return [tabbar] + content[ctx["scroll"]:ctx["scroll"] + h - 1]
 
 
 def cpu_graph(w, h, ctx):
@@ -73,25 +84,6 @@ def cpu_graph(w, h, ctx):
     return lines
 
 
-def matrix():
-    drops = {}
-
-    def step(w, h, ctx):
-        for x in range(w):
-            if x not in drops and random.random() < 0.04:
-                drops[x] = 0
-        grid = [[(" ", "")] * w for _ in range(h)]
-        for x, y in list(drops.items()):
-            for k in range(8):
-                if 0 <= y - k < h and x < w:
-                    grid[y - k][x] = (random.choice("01$#@%&*+=<>?ABCDEFXYZ"), "bold" if k == 0 else "good")
-            drops[x] = y + 1
-            if y - 8 > h:
-                del drops[x]
-        return [list(r) for r in grid]
-    return step
-
-
 def feed(make, per_frame=2):
     buf = collections.deque(maxlen=200)
 
@@ -100,14 +92,6 @@ def feed(make, per_frame=2):
             buf.append(make(w, ctx))
         return list(buf)[-h:]
     return step
-
-
-def proc_line(w, ctx):
-    pid = random.choice(list(ctx["cur"][4]))
-    st = proc_stat(pid)
-    verdict = random.choice((("SCANNED", "good"), ("HOOKED", "warn"), ("INJECTED", "title"), ("PWNED", "crit")))
-    return [(f"{pid:>7} ", "dim"), (f"{(st[0] if st else '?')[:15]:<15} ", "bold"),
-            (f"0x{random.getrandbits(32):08x} ", "dim"), verdict]
 
 
 def net_line(w, ctx):
@@ -143,18 +127,69 @@ def build_line(w, ctx):
     return [tag, (msg, "")]
 
 
-# Names for the "loading" pane: loading.txt, shipped next to this file. One name per line;
-# anything after a tab is ignored, so a pasted 2-column table works.
-LOADING_FILE = os.path.join(os.path.dirname(os.path.realpath(__file__)), "loading.txt")
+# Names for the "loading" pane.
+LOADING = (
+    'abuseACL', 'aclpwn', 'AD-miner', 'adidnsdump', 'adwsdomaindump', 'aircrack-ng', 'aliasr', 'alterx',
+    'amass', 'amber', 'androguard', 'android-tools-adb', 'anew', 'angr', 'apksigner', 'apktool', 'arjun',
+    'asciinema', 'asdf', 'asrepcatcher', 'assetfinder', 'autobloody', 'autoconf', 'autorecon', 'avrdude',
+    'awscli', 'azure-cli', 'badsecrets', 'BBOT', 'bettercap', 'binaryninja', 'binwalk', 'Blackbird',
+    'bloodbash', 'bloodhound', 'BloodHound-CE', 'bloodhound-ce.py', 'bloodhound-import',
+    'bloodhound-quickwin', 'bloodhound.py', 'bloodyAD', 'bolt', 'bqm', 'brakeman', 'bruteforce-luks', 'bully',
+    'burpsuite', 'byp4xx', 'caido', 'carbon14', 'Censys', 'certipy', 'certsync', 'cewl', 'cewler', 'chainsaw',
+    'chaos', 'checksec-py', 'chisel', 'cloudfail', 'cloudmapper', 'cloudsplaining', 'cloudsploit', 'clusterd',
+    'cmloot', 'cmsmap', 'coercer', 'conpass', 'constellation', 'corscanner', 'cowpatty', 'crackhound',
+    'creds', 'crunch', 'cupp', 'curlie', 'CyberChef', 'cyperoth', 'daclsearch', 'darkarmour', 'dex2jar',
+    'dfscoerce', 'dirb', 'dirsearch', 'divideandscan', 'dns2tcp', 'dnschef', 'dnsenum', 'dnsx', 'donpapi',
+    'dploot', 'droopescan', 'drupwn', 'dtrx', 'eaphammer', 'empire', 'enum4linux-ng', 'enyx', 'EVENmonitor',
+    'evil-winrm-py', 'evilwinrm', 'exegol-history', 'exif', 'exifprobe', 'exiftool', 'exiv2',
+    'ExtractBitlockerKeys', 'eyewitness', 'fcrackzip', 'fdisk', 'feroxbuster', 'ffuf', 'fierce', 'finalrecon',
+    'findomain', 'firefox', 'firefox_decrypt', 'foremost', 'fping', 'freeipscanner', 'freerdp2-x11', 'frida',
+    'fuxploider', 'fzf', 'gau', 'gef', 'genusernames', 'GeoPincer', 'geowordlists', 'gf', 'ghidra', 'GHunt',
+    'git-dumper', 'githubemail', 'gitleaks', 'gittools', 'glow', 'gmsadumper', 'gobuster', 'godap', 'GoExec',
+    'goldencopy', 'GoMapEnum', 'gopherus', 'gosecretsdump', 'goshs', 'gowitness', 'GPOddity', 'gpoParser',
+    'gpp-decrypt', 'gqrx', 'gron', 'h2csmuggler', 'h8mail', 'hackrf', 'haiti', 'hakrawler', 'hakrevdns',
+    'hashcat', 'hashonymize', 'Havoc', 'hcxdumptool', 'hcxtools', 'hexedit', 'Hob0Rules rules', 'holehe',
+    'hping3', 'httpmethods', 'httprobe', 'httpx', 'hydra', 'ida', 'ignorant', 'imagemagick', 'impacket',
+    'impacket', 'Instaloader', 'ipinfo', 'iptables', 'jackit', 'jadx', 'jd-gui', 'jdwp', 'john', 'joomscan',
+    'jsluice', 'jwt', 'k9s', 'kadimus', 'katana', 'keepassxc', 'KeePwn', 'kerbrute', 'keytabextract',
+    'kiterunner', 'Kraken', 'krbjack', 'krbrelayx', 'kubectl', 'ldapdomaindump', 'ldaprelayscan',
+    'ldapsearch', 'ldapsearch-ad', 'LDAPWordlistHarvester', 'ldeep', 'legba', 'libmspack', 'libnfc',
+    'libnfc-crypto1-crack', 'libusb-dev', 'ligolo-ng', 'linkedin2username', 'linkfinder', 'lnkup', 'lsassy',
+    'ltrace', 'maigret', 'maltego', 'manspider', 'mariadb-client', 'masky', 'masscan', 'massdns', 'mdcat',
+    'Metagoofil', 'metasploit', 'mfcuk', 'mfdread', 'mfoc', 'minicom', 'mitm6', 'mitmproxy', 'mobsf',
+    'moodlescan', 'mousejack', 'msprobe', 'MurMurHash', 'naabu', 'name-that-hash', 'nasm', 'nbtscan', 'neo4j',
+    'neovim', 'netdiscover', 'netexec', 'nfct', 'nfsshell', 'ngrok', 'nmap', 'nmap-parse-ouptut', 'noPac',
+    'nosqlmap', 'NSAKEY rules', 'ntlmv1-multi', 'ntlm_theft', 'nuclei', 'oaburl', 'objection', 'objectwalker',
+    'oletools', 'oneforall', 'onelistforall', 'OneRuleToRuleThemStill rules', 'onesixtyone', 'OpenVPN',
+    'pacu', 'Pantagrule rules', 'pass', 'PassTheCert', 'patator', 'pcredz', 'pcsc', 'pdfcrack', 'peda',
+    'peepdf', 'penelope', 'petitpotam', 'phoneinfoga', 'photon', 'PHP filter chain generator', 'phpggc',
+    'pkcrack', 'pkinittools', 'polenum', 'postman', 'powershell', 'Powerview.py', 'pp-finder', 'pre2k',
+    'pretender', 'prips', 'privexchange', 'prowler', 'proxmark3', 'proxychains', 'pst-utils', 'pth-tools',
+    'pwncat-vl', 'pwndb', 'pwndbg', 'pwnedornot', 'pwninit', 'pwntools', 'PXEThief', 'pycdc',
+    'pyFindUncommonShares', 'pyftpdlib', 'pygoldengmsa', 'pygpoabuse', 'pykek', 'pylaps', 'pymeta',
+    'pypykatz', 'pyrit', 'pysnaffler', 'pywerview', 'pywhisker', 'pywsus', 'radare2', 'rdesktop', 'reaver',
+    'recon-ng', 'recondog', 'redis-tools', 'RelayInformer', 'remmina', 'RemoteMonologue', 'responder',
+    'rlwrap', 'ROADrecon', 'ROADtx', 'roastinthemiddle', 'robotstester', 'routersploit', 'RsaCracker',
+    'rsactftool', 'rsync', 'rtl-433', 'ruler', 'rusthound', 'rusthound-ce', 'rustscan', 's3scanner',
+    'samdump2', 'sccmhunter', 'sccmsecrets', 'sccmwtf', 'scout', 'scrcpy', 'searchsploit', 'seclists',
+    'semgrep', 'shadowcoerce', 'sharker', 'shellerator', 'Sherlock', 'shuffledns', 'simplyemail',
+    'sipvicious', 'sleuthkit', 'sliver', 'smali', 'smartbrute', 'smbclient', 'smbclient-ng', 'smbmap',
+    'smtp-user-enum', 'smuggler', 'snaffler-ng', 'SoapUI', 'soapy', 'spiderfoot', 'sprayhound', 'sqlmap',
+    'ssh-audit', 'sshuttle', 'sslscan', 'ssrfmap', 'steghide', 'stegolsb', 'stegosuite', 'strace',
+    'subfinder', 'sublist3r', 'subzy', 'swaks', 'symfony-exploits', 'tailscale', 'targetedKerberoast',
+    'tcpdump', 'tdo_dump', 'TeamsPhisher', 'testdisk', 'testssl', 'theharvester', 'thr', 'tig', 'timing',
+    'tls-map', 'token-exploiter', 'tomcatwardeployer', 'tor', 'toutatis', 'traceroute', 'trevorspray', 'trid',
+    'TriliumNext', 'trufflehog', 'tshark', 'uberfile', 'udpx', 'uncover', 'updog', 'uploader', 'upx',
+    'urldedupe', 'username-anarchy', 'Villain', 'volatility2', 'volatility3', 'vt', 'wabt', 'wafw00f',
+    'waybackurls', 'webclientservicescanner', 'weevely', 'wesng', 'wfuzz', 'whatportis', 'whatweb', 'whois',
+    'wifite2', 'windapsearch-go', 'wireguard', 'wireshark', 'wpprobe', 'wpscan', 'wuzz', 'XSpear',
+    'xsrfprobe', 'xsser', 'xsstrike', 'xtightvncviewer', 'XXEinjector', 'Yalis', 'yarn', 'youtubedl',
+    'ysoserial', 'yt-dlp', 'Zehef', 'zerologon', 'zipalign', 'zsteg',
+)
 
 
 def loading_names():
-    try:
-        with open(LOADING_FILE, encoding="utf-8", errors="replace") as f:
-            names = [line.split("\t")[0].strip() for line in f if line.strip()]
-    except OSError:
-        names = []
-    return random.sample(names, len(names)) or ["(no loading.txt)"]
+    return random.sample(LOADING, len(LOADING))
 
 
 def loader():
@@ -178,34 +213,179 @@ def loader():
     return step
 
 
+def hacker_typer():
+    """Types out jtop's own source, fast, with a blinking cursor. Real code, like hackertyper.net."""
+    try:
+        src = open(os.path.join(os.path.dirname(os.path.realpath(__file__)), "jtop.py")).read()
+    except OSError:
+        src = "print('hack the planet')\n" * 50
+    src = src.expandtabs(4)
+    pos = [0]
+
+    def step(w, h, ctx):
+        pos[0] = (pos[0] + random.randint(4, 12)) % len(src)
+        shown = src[:pos[0]]
+        rows = shown.splitlines()[-(h):] or [""]
+        rows[-1] = rows[-1] + ("█" if ctx["frame"] % 2 else " ")  # blinking cursor
+        return [[(r[:w], "good")] for r in rows]
+    return step
+
+
+def donut():
+    """The classic spinning 3D ASCII donut (donut.c), by Andy Sloane."""
+    a = [0.0]
+    b = [0.0]
+
+    def step(w, h, ctx):
+        chars = ".,-~:;=!*#$@"
+        out = [[" "] * w for _ in range(h)]
+        zbuf = [[0.0] * w for _ in range(h)]
+        A, B = a[0], b[0]
+        for th in [i * 0.07 for i in range(90)]:
+            for ph in [i * 0.02 for i in range(314)]:
+                ct, st, cp, sp, cA, sA, cB, sB = (math.cos(th), math.sin(th), math.cos(ph), math.sin(ph),
+                                                  math.cos(A), math.sin(A), math.cos(B), math.sin(B))
+                cw = ct + 2
+                d = 1 / (sp * cw * sA + st * cA + 5)
+                t = sp * cw * cA - st * sA
+                x = int(w / 2 + 0.5 * w * d * (cp * cw * cB - t * sB))
+                y = int(h / 2 + h * d * (cp * cw * sB + t * cB))
+                lum = cp * ct * sB - cA * ct * sp - sA * st + cB * (cA * st - ct * sA * sp)
+                if 0 <= x < w and 0 <= y < h and d > zbuf[y][x]:
+                    zbuf[y][x] = d
+                    out[y][x] = chars[max(0, int(lum * 8))]
+        a[0] += 0.07
+        b[0] += 0.03
+        return [[("".join(r), "warn")] for r in out]
+    return step
+
+
+CLAUDING = (
+    "Clauding...", "Asking nicely for root...", "Downloading more GPUs...",
+    "Explaining recursion to the kernel...", "Pondering the orb...", "Reticulating splines...",
+    "Summoning the daemon...", "Negotiating with the firewall...", "Compiling good vibes...",
+    "Teaching the mainframe to feel...", "Rebooting the matrix...", "Thinking really hard...",
+    "Counting to infinity (twice)...", "Aligning the flux capacitor...", "Bribing the garbage collector...",
+    "Translating cat to human...", "Rewriting it in Rust...", "Consulting the rubber duck...",
+    "Untangling the dependency tree...", "Convincing the GPU to try again...", "Petting the neural net...",
+    "Googling the error message...", "Blaming the intern...", "Turning it off and on again...",
+)
+
+CLAUDE_LOGO = (
+    "   .  *  .   ",
+    " *  \\ | /  * ",
+    "-- --(*)-- --",
+    " *  / | \\  * ",
+    "   '  *  '   ",
+)
+
+
+def claude_clauding():
+    feed_buf = collections.deque(maxlen=50)
+
+    def step(w, h, ctx):
+        if ctx["frame"] % 6 == 0:
+            feed_buf.append(random.choice(CLAUDING))
+        lines = [[(r.center(w), "title")] for r in CLAUDE_LOGO] + [[]]
+        spin = "|/-\\"[ctx["frame"] % 4]
+        for i, phrase in enumerate(list(feed_buf)[-(h - len(CLAUDE_LOGO) - 1):]):
+            last = i == len(list(feed_buf)[-(h - len(CLAUDE_LOGO) - 1):]) - 1
+            lines.append([(f" {spin if last else '+'} ", "title" if last else "good"),
+                          (phrase, "bold" if last else "dim")])
+        return lines
+    return step
+
+
+def doom_fire():
+    """The Doom PSX fire effect, in ASCII, colored per cell so it looks right at any size."""
+    grid = [[0]]
+    chars = " .:-=+*#%@"
+
+    def cell_style(c):
+        return "bold" if c >= 28 else "warn" if c >= 18 else "crit" if c >= 6 else "dim"
+
+    def step(w, h, ctx):
+        if len(grid) != h or len(grid[0]) != w:
+            grid[:] = [[0] * w for _ in range(h)]
+            grid[-1] = [36] * w  # bottom row: the fire source, always max heat
+        grid[-1] = [random.randint(26, 36) for _ in range(w)]  # flickering source
+        for x in range(w):
+            for y in range(1, h):
+                decay = random.randint(0, 3)
+                dst = max(0, min(w - 1, x - decay + 1))
+                grid[y - 1][dst] = max(0, grid[y][x] - decay)  # bigger drop -> flames taper into tongues
+        lines = []
+        for row in grid[:-1]:
+            line, run, run_style = [], "", None
+            for c in row:
+                ch = chars[min(len(chars) - 1, c * len(chars) // 37)]
+                st = cell_style(c) if c else "dim"
+                if st != run_style and run:
+                    line.append((run, run_style))
+                    run = ""
+                run, run_style = run + ch, st
+            line.append((run, run_style))
+            lines.append(line)
+        return lines
+    return step
+
+
+# The worst, most common passwords. A gag pane mocking weak passwords.
+PASSWORDS = (
+    '123456', '12345678', '123456789', 'admin', '1234', 'Aa123456', '12345', 'password', '123', '1234567890',
+    'qwerty', 'qwerty123', 'Aa@123456', '1234567', 'Password', 'P@ssw0rd', 'admin123', '111111', 'Pass@123',
+    '123123', 'welcome', '1q2w3e4r', 'abc123', 'Admin@123', 'iloveyou', '000000', 'password1', 'qwerty1',
+    'Abcd@1234', 'dragon', 'monkey', 'letmein', '1q2w3e4r5t', 'qwertyuiop', '********', 'secret',
+    'password123', 'football', 'shadow', 'sunshine', 'princess', 'master', 'michael', 'ashley', 'charlie',
+    '1qaz2wsx', 'asdfghjkl', 'zxcvbnm', '654321', '666666', 'superman', 'batman', 'India@123', 'trustno1',
+    'hello', 'love', 'whatever', 'donald', 'liverpool', 'arsenal', 'chelsea', 'jordan', 'nicole', 'taylor',
+    'access', 'thomas', 'buster', 'hockey', 'hunter', 'soccer', 'ranger', 'andrew', 'harley', 'tigger',
+    'joshua', 'starwars', 'matthew', 'george', 'summer', 'friday', 'cheese', 'cookie', 'coffee', 'pepper',
+    'guitar', 'chicken', 'ginger', 'maggie', 'jessica', 'jennifer', 'amanda', 'Robert', 'daniel', 'william',
+    'maria', 'veronica', 'susana', 'skibidi', 'minecraft', 'Minecraft', 'fortnite', 'roblox', 'warcraft',
+    'newmember', 'newuser', 'newpass', 'temppass', 'test', 'test123', 'guest', 'root', 'pass', 'passw0rd',
+    'Password1', 'Password123', 'eminem', '50cent', 'metallica', 'slipknot', 'blink182', 'spiderman',
+    'hellokitty', 'barbie', 'mario', 'joker', 'thor', 'elsa', '987654321', '147258369', '112233', '121212',
+    '131313', '696969', '777777', '888888', '999999', 'aaaaaa', 'qqqqqq', 'london', 'manchester', 'password!',
+    'qwerty!', '123456!', 'computer', 'internet', 'louvre', 'diamond', 'killer', 'yankees', 'lakers',
+)
+
+
+def dumb_passwords():
+    """A gag: the worst, most common passwords scrolling by. Purely a display, mocks weak passwords."""
+    buf = collections.deque(maxlen=60)
+
+    def step(w, h, ctx):
+        if ctx["frame"] % 2 == 0:
+            buf.append(random.choice(PASSWORDS))
+        spin = "|/-\\"[ctx["frame"] % 4]
+        lines = []
+        shown = list(buf)[-h:]
+        for i, pw in enumerate(shown):
+            last = i == len(shown) - 1
+            lines.append([(f" {spin if last else '>'} ", "dim"), (pw, "bold" if last else "dim")])
+        return lines
+    return step
+
+
 def layout(h, w):
     """Grid of panes: our real stats top-left, the banner top-right, effects everywhere else."""
     cols, rows = (3, 3) if w < 180 else (4, 3)
     effects = itertools.cycle([
-        ("/proc", feed(proc_line, 3)), ("net", feed(net_line, 2)), ("matrix", matrix()),
+        ("typer", hacker_typer()), ("net", feed(net_line, 2)), ("donut", donut()),
         ("hexdump", feed(hex_line(), 3)), ("loading", loader()), ("cpu % (live)", cpu_graph),
-        ("build", feed(build_line, 1)),
+        ("build", feed(build_line, 1)), ("claude", claude_clauding()), ("fire", doom_fire()),
+        ("testing dumb password", dumb_passwords()),
     ])
     panes = []
     for i in range(cols * rows):
         r, c = divmod(i, cols)
-        title, step = ("jtop", summary) if i == 0 else ("yes", banner) if i == cols - 1 else next(effects)
+        title, step = ("", real_jtop) if i == 0 else ("yes", banner) if i == cols - 1 else next(effects)
         x, y = c * (w // cols), r * (h // rows)
         pw = w // cols if c < cols - 1 else w - x
         ph = h // rows if r < rows - 1 else h - y
         panes.append((y, x, ph, pw, title, step))
     return panes
-
-
-def fun_stats(prev, cur):
-    dt = max(cur[0] - prev[0], 1e-3)
-    m = meminfo()
-    net = deltas(prev[3], cur[3]).values()
-    bats = batteries()
-    return {"cpu": cpu_percent(prev, cur).get("cpu", 0), "ram": 100 * (m["MemTotal"] - m["MemAvailable"]) / m["MemTotal"],
-            "temp": max((c for _, c in temps()), default=0), "procs": len(cur[4]),
-            "bat": int(read(bats[0] / "capacity", "0")) if bats else None,
-            "rx": sum(v[0] for v in net) / dt, "tx": sum(v[1] for v in net) / dt}
 
 
 def fun(scr):
@@ -214,8 +394,8 @@ def fun(scr):
     prev = sample()
     time.sleep(0.2)
     cur = sample()
-    stats = fun_stats(prev, cur)
-    ctx = {"prev": prev, "cur": cur, "frame": 0, "stats": stats, "history": []}
+    ctx = {"prev": prev, "cur": cur, "frame": 0, "history": [],
+           "tab": 0, "scroll": 0, "show_all": False, "comps": components()}
     last = cpu_times()["cpu"]
     size = panes = None
     while True:
@@ -224,7 +404,6 @@ def fun(scr):
             size, panes = (h, w), layout(h, w)
         if time.monotonic() - ctx["cur"][0] >= 1:
             ctx["prev"], ctx["cur"] = ctx["cur"], sample()
-            ctx["stats"] = fun_stats(ctx["prev"], ctx["cur"])
         now = cpu_times()["cpu"]
         ctx["history"] = ctx["history"][-500:] + [100 * (now[0] - last[0]) / max(now[1] - last[1], 1)]
         last = now
@@ -243,8 +422,21 @@ def fun(scr):
                 pass  # pane too small for this terminal size
         scr.refresh()
         ctx["frame"] += 1
-        if scr.getch() == ord("q"):
+        k = scr.getch()
+        if k == ord("q"):
             break
+        if k == 9:  # Tab: cycle the real jtop pane
+            ctx["tab"], ctx["scroll"] = (ctx["tab"] + 1) % len(TABS), 0
+        elif k == ord("a") and ctx["tab"] == 2:
+            ctx["show_all"] = not ctx["show_all"]
+        elif k == curses.KEY_UP:
+            ctx["scroll"] -= 1
+        elif k == curses.KEY_DOWN:
+            ctx["scroll"] += 1
+        elif k == curses.KEY_PPAGE:
+            ctx["scroll"] -= h
+        elif k == curses.KEY_NPAGE:
+            ctx["scroll"] += h
 
 
 def run():
@@ -259,10 +451,12 @@ def check():
     a = sample()
     time.sleep(0.2)
     b = sample()
-    ctx = {"prev": a, "cur": b, "frame": 0, "stats": fun_stats(a, b), "history": [10.0, 50.0, 100.0]}
+    ctx = {"prev": a, "cur": b, "frame": 0, "history": [10.0, 50.0, 100.0],
+           "tab": 0, "scroll": 0, "show_all": False, "comps": components()}
     for h, w in ((24, 80), (40, 120), (60, 240)):  # every fun pane renders, a few frames each
         for frame in range(20):
             ctx["frame"] = frame
+            ctx["tab"] = frame % len(TABS)  # cycle the real-jtop pane through all tabs
             for _, _, ph, pw, _, step in layout(h, w):
                 step(pw - 2, ph - 2, ctx)
     assert any("█" in "".join(t for t, _ in l) for l in banner(38, 11, ctx)), "banner too big for a 3x3 pane"
