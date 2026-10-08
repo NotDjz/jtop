@@ -34,3 +34,21 @@ Description: hardware components and live usage, htop style
  Two tabs: a list of the machine's components, and live CPU, memory,
  disk, network and temperature usage.
 
+Package: jtop
+Architecture: all
+Version: 1.2
+Priority: optional
+Section: utils
+Maintainer: notdjz <notdjz@users.noreply.github.com>
+Depends: python3
+Filename: ./jtop_1.2_all.deb
+Size: 24304
+MD5sum: d63a0ab00a7a128a8ffabdbe34c7546c
+SHA1: 1fd0f85208da3446027bbcce31789d5aa90e9402
+SHA256: 6f7f95189da2f81ae60e4243928a4d52d37de30b1bd5dbe69b11cdc8c5767e46
+SHA512: 18c9a763c3451fe66735b2ef8ba4991bae817100f16240aab0d92e452b678abd78194971657920d33b10ca8d8cca2ad02316203edcb1074c244ef3a803603bcd
+Homepage: https://github.com/notdjz/jtop
+Description: hardware components and live usage, htop style
+ Three tabs: the machine's components, live CPU, memory, disk, network,
+ temperature and battery usage, and a process list.
+

@@ -1,14 +1,17 @@
 # jtop
 
 Hardware components and live usage in your terminal, htop style.
-Two tabs: **Components** (CPU, memory, motherboard, GPU, disks, network) and **Usage**
-(per-core CPU, RAM/swap, disk and network throughput, filesystems, temperatures).
+Three tabs: **Components** (CPU, memory, motherboard, GPU, battery, disks, network), **Usage**
+(per-core CPU, RAM/swap, disk and network throughput, filesystems, temperatures, battery)
+and **Processes** (sorted by CPU, with memory, user and command).
 
 Linux only, Python 3 standard library, no dependencies.
 
 ![Components tab](screenshots/components.png)
 
 ![Usage tab](screenshots/usage.png)
+
+![Processes tab](screenshots/processes.png)
 
 ## Install (Debian / Ubuntu)
 

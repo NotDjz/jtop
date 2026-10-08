@@ -5,20 +5,28 @@ Keys: Tab switch, ↑ ↓ scroll, q quit.
 Self-test: python3 jtop.py --check
 """
 import curses
+import functools
 import os
+import pwd
 import sys
 import time
 from pathlib import Path
 
-TABS = ("Components", "Usage")
+TABS = ("Components", "Usage", "Processes")
 LABEL = 24  # label width, keeps every bar aligned
+PAGE = os.sysconf("SC_PAGE_SIZE")
+HZ = os.sysconf("SC_CLK_TCK")
 
 
 def read(path, default=""):
     try:
-        return Path(path).read_text().strip()
+        return Path(path).read_text(errors="replace").strip()
     except OSError:
         return default
+
+
+def physical(iface):
+    return os.path.exists(f"/sys/class/net/{iface}/device")  # lo, docker, bridges, veth have none
 
 
 def human(n, unit="B"):
@@ -59,13 +67,33 @@ def net_io():
         name, data = line.split(":", 1)
         f = data.split()
         name = name.strip()
-        if name != "lo" and read(f"/sys/class/net/{name}/operstate") == "up":
+        if physical(name) and read(f"/sys/class/net/{name}/operstate") == "up":
             io[name] = (int(f[0]), int(f[8]))
     return io
 
 
+def proc_stat(pid):
+    """(comm, fields after the comm) from /proc/<pid>/stat, or None if the process is gone."""
+    stat = read(f"/proc/{pid}/stat")
+    if not stat:
+        return None
+    return stat[stat.find("(") + 1:stat.rfind(")")], stat[stat.rfind(")") + 2:].split()
+
+
+def proc_times():
+    out = {}
+    for pid in os.listdir("/proc"):
+        if pid.isdigit() and (st := proc_stat(pid)):
+            out[int(pid)] = (int(st[1][11]) + int(st[1][12]),)  # utime + stime, in ticks
+    return out
+
+
 def sample():
-    return time.monotonic(), cpu_times(), disk_io(), net_io()
+    return time.monotonic(), cpu_times(), disk_io(), net_io(), proc_times()
+
+
+def cpu_percent(prev, cur):
+    return {k: 100 * busy / max(total, 1) for k, (busy, total) in deltas(prev[1], cur[1]).items()}
 
 
 def deltas(a, b):
@@ -108,6 +136,38 @@ def filesystems():
     return out
 
 
+def batteries():
+    return sorted(Path("/sys/class/power_supply").glob("BAT*"))
+
+
+@functools.lru_cache(maxsize=None)
+def username(uid):
+    try:
+        return pwd.getpwuid(uid).pw_name
+    except KeyError:
+        return str(uid)
+
+
+def pci_name(pci_id):
+    """'8086:46A8' -> 'Intel Corporation Alder Lake-UP3 GT2 [Iris Xe Graphics]', from the pci.ids database."""
+    vendor, device = pci_id.lower().split(":")
+    for path in ("/usr/share/misc/pci.ids", "/usr/share/hwdata/pci.ids"):
+        try:
+            f = open(path, encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        with f:
+            name = None
+            for line in f:
+                if line.startswith(vendor + "  "):
+                    name = line[6:].strip()
+                elif name and line.startswith("\t" + device + "  "):
+                    return f"{name} {line[7:].strip()}"
+                elif name and line[:1] not in ("\t", "#", "\n"):
+                    return name  # next vendor reached: device unknown
+    return None
+
+
 def uptime():
     s = float(read("/proc/uptime", "0").split()[0])
     return f"{int(s // 86400)}d {int(s % 86400 // 3600)}h {int(s % 3600 // 60):02}m"
@@ -141,9 +201,21 @@ def components():
     gpus = []
     for card in sorted(Path("/sys/class/drm").glob("card[0-9]")):
         ue = dict(l.split("=", 1) for l in read(card / "device/uevent").splitlines() if "=" in l)
-        gpus.append((card.name, f"driver {ue.get('DRIVER', '?')}  [PCI {ue.get('PCI_ID', '?')}]"))
+        pci = ue.get("PCI_ID", "?")
+        name = pci_name(pci) if ":" in pci else None
+        gpus.append((card.name, f"{name or 'PCI ' + pci}  (driver {ue.get('DRIVER', '?')})"))
     if gpus:
         out.append(("Graphics", gpus))
+
+    bats = []
+    for b in batteries():
+        full = read(b / "energy_full") or read(b / "charge_full")
+        design = read(b / "energy_full_design") or read(b / "charge_full_design")
+        health = f"  health {100 * int(full) / int(design):.0f}%" if full and int(design or 0) else ""
+        bats.append((b.name, f"{read(b / 'manufacturer', '?')} {read(b / 'model_name', '?')}  "
+                             f"{read(b / 'technology', '?')}{health}"))
+    if bats:
+        out.append(("Battery", bats))
 
     disks = []
     for d in DISKS:
@@ -153,11 +225,9 @@ def components():
     out.append(("Disks", disks))
 
     nets = []
-    for n in sorted(os.listdir("/sys/class/net")):
-        if n == "lo":
-            continue
+    for n in sorted(filter(physical, os.listdir("/sys/class/net"))):
         p = f"/sys/class/net/{n}"
-        kind = "Wi-Fi" if os.path.exists(p + "/wireless") else "Ethernet" if os.path.exists(p + "/device") else "virtual"
+        kind = "Wi-Fi" if os.path.exists(p + "/wireless") else "Ethernet"
         speed = read(p + "/speed")
         speed = f"  {speed} Mb/s" if speed.isdigit() and int(speed) > 0 else ""
         nets.append((n, f"{kind}  {read(p + '/address')}  {read(p + '/operstate')}{speed}"))
@@ -171,19 +241,22 @@ def header(title, w):
     return [("─ ", "dim"), (title, "title"), (" " + "─" * max(w - len(title) - 4, 0), "dim")]
 
 
-def bar(label, pct, width, value=None, extra=""):
+def level(pct):
+    return "good" if pct < 60 else "warn" if pct < 85 else "crit"
+
+
+def bar(label, pct, width, value=None, extra="", color=None):
     pct = max(0.0, min(pct, 100.0))
     value = value or f"{pct:5.1f}%"
     extra = f" {extra:<24}" if extra else ""
     n = max(width - len(label) - len(value) - len(extra) - 3, 5)
     fill = round(n * pct / 100)
-    color = "good" if pct < 60 else "warn" if pct < 85 else "crit"
-    return [(label, "bold"), ("▕", "dim"), ("█" * fill, color), ("░" * (n - fill), "dim"),
+    return [(label, "bold"), ("▕", "dim"), ("█" * fill, color or level(pct)), ("░" * (n - fill), "dim"),
             ("▏", "dim"), (value + " ", "bold"), (extra, "dim")]
 
 
-def row(label, pct, w, value=None, extra=" "):
-    return bar(f"  {label[:LABEL - 3]:<{LABEL - 2}}", pct, w - 1, value, extra)
+def row(label, pct, w, value=None, extra=" ", color=None):
+    return bar(f"  {label[:LABEL - 3]:<{LABEL - 2}}", pct, w - 1, value, extra, color)
 
 
 def component_lines(comps, w):
@@ -195,10 +268,10 @@ def component_lines(comps, w):
 
 
 def usage_lines(w, prev, cur):
-    t0, cpu0, dsk0, net0 = prev
-    t1, cpu1, dsk1, net1 = cur
+    t0, _, dsk0, net0, _ = prev
+    t1, _, dsk1, net1, _ = cur
     dt = max(t1 - t0, 1e-3)
-    pct = {k: 100 * act / max(tot, 1) for k, (act, tot) in deltas(cpu0, cpu1).items()}
+    pct = cpu_percent(prev, cur)
 
     lines = [[], header("CPU", w)]
     cores = sorted((k for k in pct if k != "cpu"), key=lambda k: int(k[3:]))
@@ -234,10 +307,74 @@ def usage_lines(w, prev, cur):
     if ts:
         lines += [[], header("Temperatures", w)]
         lines += [row(name, c, w, value=f"{c:4.0f}°C") for name, c in ts]  # full bar = 100 °C
+
+    bats = batteries()
+    if bats:
+        lines += [[], header("Battery", w)]
+        for b in bats:
+            pct = int(read(b / "capacity", "0"))
+            color = "crit" if pct < 15 else "warn" if pct < 30 else "good"  # low charge is the bad end
+            lines.append(row(b.name, pct, w, extra=read(b / "status", "?"), color=color))
+    return lines
+
+
+STATES = {"R": ("run", "good"), "S": ("sleep", "dim"), "D": ("disk", "warn"), "I": ("idle", "dim"),
+          "T": ("stop", "warn"), "t": ("trace", "warn"), "Z": ("zombie", "crit"), "X": ("dead", "crit")}
+
+
+def process_lines(w, prev, cur, show_all=False):
+    dt = max(cur[0] - prev[0], 1e-3)
+    total = meminfo()["MemTotal"]
+    procs = []
+    for pid, (ticks,) in deltas(prev[4], cur[4]).items():
+        st = proc_stat(pid)
+        try:
+            uid = os.stat(f"/proc/{pid}").st_uid
+        except OSError:
+            st = None
+        if not st:
+            continue  # process exited between two samples
+        comm, f = st
+        cmd = " ".join(read(f"/proc/{pid}/cmdline").replace("\0", " ").split())  # newlines in args would break the row
+        if not cmd:
+            cmd = comm = f"[{comm}]"  # kernel thread
+        procs.append((100 * ticks / (dt * HZ), int(f[21]) * PAGE, pid, username(uid), f[0], cmd if show_all else comm))
+    procs.sort(reverse=True)  # busiest first, then biggest memory
+
+    columns = f"{'PID':>7}  {'USER':<10} {'CPU%':>6} {'MEM%':>5} {'MEM':>9}  {'STATE':<6}  COMMAND"
+    title = f"Processes · all {len(procs)} · a: top 10" if show_all else f"Processes · top 10 of {len(procs)} · a: show all"
+    lines = [[], header(title, w), [(columns.ljust(w), "tab_off")]]
+    for cpu, rss, pid, user, state, cmd in procs if show_all else procs[:10]:
+        word, color = STATES.get(state, (state, "dim"))
+        lines.append([(f"{pid:>7}  ", "dim"), (f"{user[:10]:<10} ", ""), (f"{cpu:6.1f} ", level(cpu) if cpu else "dim"),
+                      (f"{100 * rss / total:5.1f} ", ""), (f"{human(rss):>9}  ", ""), (f"{word:<6}  ", color),
+                      (cmd, "bold")])
     return lines
 
 
 # ---------- curses ----------
+
+def init_styles():
+    curses.curs_set(0)
+    curses.use_default_colors()
+    colors = (curses.COLOR_GREEN, curses.COLOR_YELLOW, curses.COLOR_RED, curses.COLOR_CYAN)
+    for i, c in enumerate(colors, 1):
+        curses.init_pair(i, c, -1)
+    curses.init_pair(5, curses.COLOR_BLACK, curses.COLOR_CYAN)
+    cp = curses.color_pair
+    return {"": 0, "bold": curses.A_BOLD, "dim": curses.A_DIM, "good": cp(1), "warn": cp(2), "crit": cp(3),
+            "title": cp(4) | curses.A_BOLD, "tab_on": cp(5) | curses.A_BOLD, "tab_off": curses.A_REVERSE}
+
+
+def put_line(scr, y, x, w, line, styles):
+    """Write one (text, style) line at (y, x), clipped to w columns."""
+    for text, style in line:
+        if w <= 0:
+            break
+        scr.addnstr(y, x, text, w, styles[style])
+        x += len(text)
+        w -= len(text)
+
 
 def draw(scr, tab, scroll, lines, styles):
     scr.erase()
@@ -252,12 +389,7 @@ def draw(scr, tab, scroll, lines, styles):
         scr.addstr(0, w - len(info), info, styles["dim"])
 
     for y, line in enumerate(lines[scroll:scroll + h - 2], 1):
-        x = 0
-        for text, style in line:
-            if x >= w:
-                break
-            scr.addnstr(y, x, text, w - x, styles[style])
-            x += len(text)
+        put_line(scr, y, 0, w, line, styles)
 
     footer = " Tab switch · ↑↓ scroll · q quit"
     scr.addnstr(h - 1, 0, footer.ljust(w), w - 1, styles["tab_off"])
@@ -265,25 +397,23 @@ def draw(scr, tab, scroll, lines, styles):
 
 
 def main(scr):
-    curses.curs_set(0)
-    curses.use_default_colors()
-    colors = (curses.COLOR_GREEN, curses.COLOR_YELLOW, curses.COLOR_RED, curses.COLOR_CYAN)
-    for i, c in enumerate(colors, 1):
-        curses.init_pair(i, c, -1)
-    curses.init_pair(5, curses.COLOR_BLACK, curses.COLOR_CYAN)
-    cp = curses.color_pair
-    styles = {"": 0, "bold": curses.A_BOLD, "dim": curses.A_DIM, "good": cp(1), "warn": cp(2), "crit": cp(3),
-              "title": cp(4) | curses.A_BOLD, "tab_on": cp(5) | curses.A_BOLD, "tab_off": curses.A_REVERSE}
+    styles = init_styles()
     scr.timeout(250)
 
     comps = components()
     tab = scroll = 0
+    show_all = False
     prev = sample()
     time.sleep(0.2)
     cur = sample()
     while True:
         h, w = scr.getmaxyx()
-        lines = component_lines(comps, w) if tab == 0 else usage_lines(w, prev, cur)
+        if tab == 0:
+            lines = component_lines(comps, w)
+        elif tab == 1:
+            lines = usage_lines(w, prev, cur)
+        else:
+            lines = process_lines(w, prev, cur, show_all)
         scroll = max(0, min(scroll, len(lines) - (h - 2)))
         try:
             draw(scr, tab, scroll, lines, styles)
@@ -294,9 +424,11 @@ def main(scr):
         if k == ord("q"):
             break
         if k == 9:
-            tab, scroll = 1 - tab, 0
-        elif k in (ord("1"), ord("2")):
+            tab, scroll = (tab + 1) % len(TABS), 0
+        elif ord("1") <= k < ord("1") + len(TABS):
             tab, scroll = k - ord("1"), 0
+        elif k == ord("a") and tab == 2:
+            show_all, scroll = not show_all, 0
         elif k == curses.KEY_UP:
             scroll -= 1
         elif k == curses.KEY_DOWN:
@@ -318,11 +450,21 @@ def check():
     act, tot = deltas(a[1], b[1])["cpu"]
     assert 0 <= act <= tot
     assert meminfo()["MemTotal"] > 0
+    assert pci_name("8086:46a8") in (None, "Intel Corporation Alder Lake-UP3 GT2 [Iris Xe Graphics]")
+    procs = process_lines(120, a, b, show_all=True)
+    assert any(str(os.getpid()) in "".join(t for t, _ in l) for l in procs), "own process missing"
+    assert len(process_lines(120, a, b)) == 3 + min(10, len(procs) - 3), "top 10"
     for w in (90, 160):
-        lines = component_lines(components(), w) + usage_lines(w, a, b)
+        lines = component_lines(components(), w) + usage_lines(w, a, b) + process_lines(w, a, b)
         assert all(len("".join(t for t, _ in l)) <= w for l in lines if l[:1] and l[0][1] != "dim"), "overflow"
     print("ok")
 
 
 if __name__ == "__main__":
-    check() if "--check" in sys.argv else curses.wrapper(main)
+    if "--check" in sys.argv:
+        check()
+    elif "--fun" in sys.argv or "-fun" in sys.argv:
+        import jtop_fun  # easter egg, not a real feature: see jtop_fun.py
+        jtop_fun.run()
+    else:
+        curses.wrapper(main)

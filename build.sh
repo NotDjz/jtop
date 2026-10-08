@@ -2,12 +2,17 @@
 # Build the .deb and refresh the signed APT repo in docs/ (served by GitHub Pages).
 # Release a new version: bump VERSION, run ./build.sh, commit, push.
 set -e
-VERSION=1.1
+VERSION=1.2
 KEY=notdjz@users.noreply.github.com
 cd "$(dirname "$0")"
 
 pkg=$(mktemp -d)
-install -Dm755 jtop.py "$pkg/usr/bin/jtop"
+install -Dm755 jtop.py "$pkg/usr/lib/jtop/jtop.py"
+install -Dm644 jtop_fun.py "$pkg/usr/lib/jtop/jtop_fun.py"
+[ -f loading.txt ] && install -Dm644 loading.txt "$pkg/usr/lib/jtop/loading.txt"
+mkdir -p "$pkg/usr/bin"
+ln -s ../lib/jtop/jtop.py "$pkg/usr/bin/jtop"
+chmod -R u=rwX,go=rX "$pkg"  # mktemp makes the root 0700; dirs must be 0755 like the real filesystem
 mkdir "$pkg/DEBIAN"
 cat > "$pkg/DEBIAN/control" <<EOF
 Package: jtop
@@ -19,8 +24,8 @@ Section: utils
 Priority: optional
 Homepage: https://github.com/notdjz/jtop
 Description: hardware components and live usage, htop style
- Two tabs: a list of the machine's components, and live CPU, memory,
- disk, network and temperature usage.
+ Three tabs: the machine's components, live CPU, memory, disk, network,
+ temperature and battery usage, and a process list.
 EOF
 mkdir -p docs
 dpkg-deb --root-owner-group --build "$pkg" "docs/jtop_${VERSION}_all.deb"
