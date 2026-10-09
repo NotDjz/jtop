@@ -5,7 +5,7 @@ Three tabs: **Components** (CPU, memory, motherboard, GPU, battery, disks, netwo
 (per-core CPU, RAM/swap, disk and network throughput, filesystems, temperatures, battery)
 and **Processes** (sorted by CPU, with memory, user and command).
 
-Linux only, Python 3 standard library, no dependencies.
+Linux: Python 3 standard library, no dependencies. Windows 11: see [below](#windows-11).
 
 ![Components tab](screenshots/components.png)
 
@@ -25,3 +25,15 @@ sudo apt install jtop
 Then run `jtop`. Updates come with `sudo apt upgrade`.
 
 For fun: `jtop --fun`
+
+## Windows 11
+
+From a clone of this repository, with a 64-bit Python 3:
+
+```powershell
+pip install psutil windows-curses
+python jtop_win.py
+```
+
+Same tabs and keys. No temperatures, which Windows does not expose without a driver, and no `--fun` yet.
+Without administrator rights, system processes show `?` as their user and their name instead of their command line.

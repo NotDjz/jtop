@@ -7,7 +7,6 @@ Self-test: python3 jtop.py --check
 import curses
 import functools
 import os
-import pwd
 import re
 import sys
 import time
@@ -16,8 +15,12 @@ from pathlib import Path
 
 TABS = ("Components", "Usage", "Processes")
 LABEL = 24  # label width, keeps every bar aligned
-PAGE = os.sysconf("SC_PAGE_SIZE")
-HZ = os.sysconf("SC_CLK_TCK")
+
+if sys.platform != "win32":  # jtop_win.py imports the layout helpers below
+    import pwd
+    PAGE = os.sysconf("SC_PAGE_SIZE")
+    HZ = os.sysconf("SC_CLK_TCK")
+    DISKS = [d for d in sorted(os.listdir("/sys/block")) if not d.startswith(("loop", "ram", "zram", "dm-"))]
 
 
 def read(path, default=""):
@@ -37,9 +40,6 @@ def human(n, unit="B"):
             return f"{n:.1f} {prefix}{unit}"
         n /= 1024
     return f"{n:.1f} P{unit}"
-
-
-DISKS = [d for d in sorted(os.listdir("/sys/block")) if not d.startswith(("loop", "ram", "zram", "dm-"))]
 
 
 # ---------- measurements ----------
@@ -485,6 +485,8 @@ def check():
 
 
 if __name__ == "__main__":
+    if sys.platform == "win32":
+        sys.exit("jtop.py is the Linux version: on Windows, run python jtop_win.py")
     if "--check" in sys.argv:
         check()
     elif "--fun" in sys.argv or "-fun" in sys.argv:
