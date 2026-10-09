@@ -57,6 +57,68 @@ def banner(w, h, ctx):
     return lines
 
 
+def runs(cells):
+    """(char, style) cells -> a put_line line, one segment per run of the same style."""
+    return [("".join(ch for ch, _ in g), st) for st, g in itertools.groupby(cells, key=lambda c: c[1])]
+
+
+SKULL = """\
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⣠⣤⣤⣤⣤⢖⣶⣶⠶⣤⣤⣤⣀⢀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣾⣿⣿⡟⠻⠛⠉⠛⠛⠙⠝⠋⠙⢿⣍⣯⣿⡷⣶⣤⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣨⠿⡽⣥⢏⡏⠂⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠙⢿⣷⣄⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⢀⠼⠃⠀⢹⣧⠀⢳⣄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠙⢿⣿⣷⣤⡀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⡠⠫⢶⠀⠀⠀⢻⡧⠰⠉⣷⠄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢠⠛⢿⣿⣷⡀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⣠⠎⠁⠀⠀⠀⠀⣀⣸⣏⠀⠀⢹⢷⠄⠀⠀⠀⠀⠀⠀⠀⠀⣀⡀⠒⢄⠀⢀⠞⠁⠀⠈⣿⣿⣿⣦⠀⠀⠀⠀
+⠀⠀⠀⠀⠎⠀⠀⠈⠀⣠⣾⠟⠛⠛⠉⠑⢮⡁⡿⠀⠀⠀⠀⠀⠀⠀⢀⣼⣿⣿⣿⣾⣷⣧⣄⡀⠀⠀⢹⣿⣿⣿⣷⡀⠀⠀
+⠀⠀⠀⢀⠆⢀⠀⢀⡴⠋⠀⣠⡄⢠⡀⠀⠀⠙⡇⠀⠀⠀⠀⠀⠀⠀⣸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣶⣄⠀⢿⣿⣿⣿⣷⡀⠀
+⠀⠀⠀⡸⠀⡸⠀⡼⠀⠀⠀⣻⡏⠀⣾⡇⠀⢀⠇⠀⢤⣶⣤⡈⢦⡀⠼⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡇⠈⣿⣿⣿⣿⣇⠀
+⠀⠀⢰⣇⢠⠇⠀⡇⠀⠀⠀⡿⡧⡽⡟⡆⢠⠞⠀⣼⣿⣿⣿⣿⡄⠹⣄⣈⠛⣿⣿⣿⣿⣿⣿⣿⣿⣿⣧⡀⣿⣿⣿⣿⣿⠀
+⠀⠀⣼⣿⠏⠀⢠⣇⣀⠀⣘⣤⢤⣧⣴⠖⠋⠀⢀⣿⣿⣿⣿⣿⣿⠀⣿⡏⢀⠈⠻⢿⣿⣿⣿⣿⣿⣿⣿⡇⢸⣿⣿⣿⣿
+⠀ ⢿⣿⠀⠀⠖⣛⣹⠛⠛⠛⠋⠀  ⢀⡢⠀⢸⣿⣿⣿⣿⣿⣿⣷⠘⣇⠀⠁⠠⠤⢅⡀⠉⣉⣛⣋⡉⢀⣿⣿⣿⣿⣿
+⠀ ⢿⡏ ⠀⠀⠈⠀⠀⠀⠀⠐⠒⠋⠉⠀⠀⠀⠀⢿⡿⠻⣿⣿⣿⠇⡈⣄⠀⠀    ⠀⠀⠈⠑⠾⠿⣿⣿⣿⣿⡟⣿⣿
+⠀  ⣿⠃  ⠀⠀⠀⠀⠱⡀⠀⠀⠀⠀⠀⠉⠀⠀⠀⠀⠚⠁⠀⡈⠛⡅⠀⡇⢸⣟⠂⠀⠀⠀⠀⠀⠀⠀⠋⠛⢋⣼⣿⣿⣿
+⠀ ⡼⠃⠀⠀⠀⠀⠀⠔⠁⠀⠀⠀  ⠀⠐⡏⠀⠀⠀⠀⡇⠀⠀⣧⠀⢢⠀⢱⠸⣿⣯⣠⠀⠀⠀ ⠀⠀⣀⣴⣠⣺⣿⣿⣿⠀
+⢠⠃⢀⣀⠤⠐⢉⣩⣉⠁⠀⠀⠀⠀⡜⢀⣄⣀⠦⡘⠛⢂⠜⠛⢧⠞⠳⢘⡀⢹⣿⣷⠀⠀⢀⡀⣊⡁⠈⠙⣿⣿⣿⣿⣿⠀
+⣸⠐⢁⣴⢶⣶⣿⣿⣿⣿⣄⠉⢆⠀⣑⡜⠉⣟⣀⣤⣀⣤⠦⠤⢼⣅⣨⢸⢸⣿⣿⣿⣇⣠⣤⣿⣥⣾⣷⣶⣌⠉⠙⢻⠀
+⠙⠷⣾⠣⣿⣿⡿⢿⣿⢻⣿⣷⡜⠀⡛⢿⣾⡟⠁⠀⠀⠀⠀⠀⠀⠀⠉⠑⠙⣶⠙⣿⣿⣏⣿⠟⣿⣿⣿⣿⣿⣧⠀⢸⡇⠀
+⠀⠀⠀⢳⣿⣿⡆⠘⣿⢨⣿⣿⡗⢰⠿⠶⡿⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣹⢉⣹⣿⣿⡿⢰⣿⡇⣼⣿⣿⡿⠀⢴⠅⠀
+⠀⠀⠀⠀⢳⡀⠀⠘⣿⠘⣿⣿⣿⠸⡀⣠⠃⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣿⠖⢊⡝⡿⠃⢸⣿⠀⣿⣿⣿⣷⡆⡇⠀⠀
+⠀⠀⠀⠀⠈⣧⠀⢸⣿⠀⣿⣷⢻⣻⣾⡷⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠙⠒⠚⠋⠁⠀⣿⡇⢠⣿⣿⣿⡿⠀⣇⠀⠀
+⠀⠀⠀⠀⠀⣸⠀⢨⣿⡇⣽⣿⠟⣷⣿⡏⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢠⣿⠁⢸⣿⣿⣿⠇⢀⡎⠀⠀
+⠀⠀⠀⠀⡀⢸⠀⠀⣿⡏⣿⡿⠷⠻⣽⡇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢸⣿⠀⣾⣿⣿⠟⠀⣿⠀⠀⠀
+⠀⠀⠀⠀⢼⣼⡆⢀⡙⢷⣿⣷⡞⣾⣻⣧⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣾⡏⠐⣿⡟⠁⠀⣼⡿⠀⠀⠀
+⠀⠀⠀⠀⠸⣿⡇⠀⠘⢾⣿⣯⠗⢿⣻⡿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣼⣿⠃⠀⣿⣷⣾⣿⡿⠃⠀⠀⠀
+⠀⠀⠀⠀⠀⠈⣏⠂⠀⠀⠹⢷⣿⠿⣿⣧⡤⢶⢲⣦⣤⠤⢤⡠⢄⣀⣀⣤⢤⡦⡴⡆⠀⣿⡃⠄⢀⣻⣿⣿⠁⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠸⣖⠀⠀⠀⢀⠉⡀⢈⠀⢻⡉⢹⠁⡷⠀⠸⠀⠘⡀⢻⡄⢸⣇⣿⡅⢀⣿⠋⠀⠸⣿⣿⠇⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⣦⣆⠀⠀⠈⠐⠄⠘⠉⠉⢻⠞⠒⣾⠲⡴⠒⠾⠓⢺⠙⠉⡿⣿⣶⣾⡿⠂⠀⠐⣿⡿⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠈⠙⢆⠀⠀⠀⠀⡀⠀⠀⠘⠀⠀⠈⠀⠇⠀⢘⠀⠚⠀⠀⠇⢻⣿⣿⡧⠀⠀⠀⣿⡇⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⣷⡄⠀⠀⠁⠐⠶⠆⠐⠀⠀⠀⠒⣀⣠⣆⣀⠀⢤⣠⣾⡿⠉⠀⠀⣀⣠⡟⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣷⢆⡀⠀⠀⠀⠀⠀⠀⠀⠀⠊⠙⢿⣿⣿⡿⠿⡿⣯⣶⠆⢠⠌⠉⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠉⠻⢷⡄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⡠⠖⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠙⠓⠛⠒⠒⠖⠛⠛⠛⠛⠛⠛⠛⠛⠋⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+""".splitlines()
+
+
+def takeover_lines(w, h, elapsed, frame):
+    """The every-5-minutes gag: the whole screen 'corrupts', then a red skull bobs over flames."""
+    if elapsed < 1.0:  # full corruption
+        return [[("".join(random.choice(GLITCH) for _ in range(max(0, w))),
+                  random.choice(("crit", "warn", "good", "title")))] for _ in range(h)]
+    aw, ah = max(map(len, SKULL)), len(SKULL)
+    fh = max(3, min(h // 3, h - ah - 1))  # flame rows at the bottom
+    left = max(0, (w - aw) // 2)
+    top = max(0, (h - fh - ah) // 2) + frame // 4 % 2  # bobbing up and down
+    lines = [[] for _ in range(top)]
+    for y, row in enumerate(SKULL[:max(0, h - fh - top)]):
+        cells = []
+        for x, ch in enumerate(row):
+            r = math.hypot((x - aw / 2) / (aw / 2), (y - ah / 2) / (ah / 2))  # red glow from the center out
+            cells.append((ch, "glow" if r < 0.45 else "ember" if r > 0.85 else "crit"))
+        lines.append([(" " * left, "")] + runs(cells))
+    lines += [[] for _ in range(h - fh - len(lines))]
+    return lines + FIRE(w, fh + 1, None)
+
+
 def real_jtop(w, h, ctx):
     """The real jtop, live, inside its little pane: Tab switches, arrows scroll, a toggles all in Processes."""
     tabbar = []
@@ -314,19 +376,8 @@ def doom_fire():
                 decay = random.randint(0, 3)
                 dst = max(0, min(w - 1, x - decay + 1))
                 grid[y - 1][dst] = max(0, grid[y][x] - decay)  # bigger drop -> flames taper into tongues
-        lines = []
-        for row in grid[:-1]:
-            line, run, run_style = [], "", None
-            for c in row:
-                ch = chars[min(len(chars) - 1, c * len(chars) // 37)]
-                st = cell_style(c) if c else "dim"
-                if st != run_style and run:
-                    line.append((run, run_style))
-                    run = ""
-                run, run_style = run + ch, st
-            line.append((run, run_style))
-            lines.append(line)
-        return lines
+        return [runs((chars[min(len(chars) - 1, c * len(chars) // 37)], cell_style(c) if c else "dim") for c in row)
+                for row in grid[:-1]]
     return step
 
 
@@ -349,6 +400,9 @@ PASSWORDS = (
     '131313', '696969', '777777', '888888', '999999', 'aaaaaa', 'qqqqqq', 'london', 'manchester', 'password!',
     'qwerty!', '123456!', 'computer', 'internet', 'louvre', 'diamond', 'killer', 'yankees', 'lakers',
 )
+
+
+FIRE = doom_fire()  # the takeover's flames, kept between frames
 
 
 def dumb_passwords():
@@ -390,12 +444,14 @@ def layout(h, w):
 
 def fun(scr):
     styles = init_styles()
+    styles.update(glow=styles["crit"] | curses.A_BOLD, ember=styles["crit"] | curses.A_DIM)  # skull's red glow
     scr.timeout(60)
     prev = sample()
     time.sleep(0.2)
     cur = sample()
     ctx = {"prev": prev, "cur": cur, "frame": 0, "history": [],
-           "tab": 0, "scroll": 0, "show_all": False, "comps": components()}
+           "tab": 0, "scroll": 0, "show_all": False, "comps": components(),
+           "takeover_start": None, "last_slot": int(time.monotonic()) // 300}
     last = cpu_times()["cpu"]
     size = panes = None
     while True:
@@ -407,7 +463,25 @@ def fun(scr):
         now = cpu_times()["cpu"]
         ctx["history"] = ctx["history"][-500:] + [100 * (now[0] - last[0]) / max(now[1] - last[1], 1)]
         last = now
+        t = time.monotonic()
+        if ctx["takeover_start"] is None and int(t) // 300 != ctx["last_slot"]:
+            ctx["last_slot"], ctx["takeover_start"] = int(t) // 300, t  # takeover every 5 minutes
         scr.erase()
+        if ctx["takeover_start"] is not None:
+            elapsed = t - ctx["takeover_start"]
+            if elapsed >= 4.0:
+                ctx["takeover_start"] = None
+            else:
+                for i, line in enumerate(takeover_lines(w - 1, h, elapsed, ctx["frame"])[:h]):
+                    try:
+                        put_line(scr, i, 0, w - 1, line, styles)
+                    except curses.error:
+                        pass
+                scr.refresh()
+                ctx["frame"] += 1
+                if scr.getch() == ord("q"):
+                    break
+                continue
         for y, x, ph, pw, title, step in panes:
             try:
                 scr.addnstr(y, x, "┌" + "─" * (pw - 2) + "┐", pw, styles["dim"])
@@ -425,7 +499,9 @@ def fun(scr):
         k = scr.getch()
         if k == ord("q"):
             break
-        if k == 9:  # Tab: cycle the real jtop pane
+        if k == ord("h"):  # trigger the hacked-skull takeover on demand (otherwise it fires every 5 minutes)
+            ctx["takeover_start"] = time.monotonic()
+        elif k == 9:  # Tab: cycle the real jtop pane
             ctx["tab"], ctx["scroll"] = (ctx["tab"] + 1) % len(TABS), 0
         elif k == ord("a") and ctx["tab"] == 2:
             ctx["show_all"] = not ctx["show_all"]
@@ -460,6 +536,13 @@ def check():
             for _, _, ph, pw, _, step in layout(h, w):
                 step(pw - 2, ph - 2, ctx)
     assert any("█" in "".join(t for t, _ in l) for l in banner(38, 11, ctx)), "banner too big for a 3x3 pane"
+    for el in (0.5, 2.0):  # corruption phase and skull phase both render for a few frames
+        for frame in range(4):
+            assert takeover_lines(80, 30, el, frame)
+    for h, w in ((24, 80), (40, 160)):  # skull shows (clipped if the terminal is small), screen fully covered
+        rows = takeover_lines(w, h, 2.0, 0)
+        assert len(rows) == h and any("⣿" in t for l in rows for t, _ in l), "skull missing"
+        assert any(t.strip() for t, _ in rows[-1]), "flames missing"
     print("ok")
 
 
