@@ -8,8 +8,10 @@ import curses
 import functools
 import os
 import pwd
+import re
 import sys
 import time
+import unicodedata
 from pathlib import Path
 
 TABS = ("Components", "Usage", "Processes")
@@ -84,7 +86,8 @@ def proc_times():
     out = {}
     for pid in os.listdir("/proc"):
         if pid.isdigit() and (st := proc_stat(pid)):
-            out[int(pid)] = (int(st[1][11]) + int(st[1][12]),)  # utime + stime, in ticks
+            # keyed by (pid, start time): a reused pid is a new process, not a negative CPU delta
+            out[int(pid), st[1][19]] = (int(st[1][11]) + int(st[1][12]),)  # utime + stime, in ticks
     return out
 
 
@@ -111,9 +114,9 @@ def meminfo():
 
 def temps():
     out = []
-    for hw in sorted(Path("/sys/class/hwmon").glob("hwmon*")):
+    for hw in sorted(Path("/sys/class/hwmon").glob("hwmon*"), key=lambda h: int(h.name[5:])):
         name = read(hw / "name", hw.name)
-        for t in sorted(hw.glob("temp*_input")):
+        for t in sorted(hw.glob("temp*_input"), key=lambda t: int(t.name[4:-6])):  # temp2 before temp10
             label = read(str(t).replace("_input", "_label"), t.name.split("_")[0])
             out.append((f"{name} {label}", int(read(t, "0")) / 1000))
     return out
@@ -123,6 +126,7 @@ def filesystems():
     seen, out = set(), []
     for line in read("/proc/mounts").splitlines():
         dev, mnt, *_ = line.split()
+        mnt = re.sub(r"\\([0-7]{3})", lambda m: chr(int(m[1], 8)), mnt)  # /proc/mounts writes a space as \040
         if not dev.startswith("/dev/") or dev in seen:
             continue
         seen.add(dev)
@@ -326,7 +330,7 @@ def process_lines(w, prev, cur, show_all=False):
     dt = max(cur[0] - prev[0], 1e-3)
     total = meminfo()["MemTotal"]
     procs = []
-    for pid, (ticks,) in deltas(prev[4], cur[4]).items():
+    for (pid, _), (ticks,) in deltas(prev[4], cur[4]).items():
         st = proc_stat(pid)
         try:
             uid = os.stat(f"/proc/{pid}").st_uid
@@ -355,25 +359,37 @@ def process_lines(w, prev, cur, show_all=False):
 # ---------- curses ----------
 
 def init_styles():
-    curses.curs_set(0)
-    curses.use_default_colors()
-    colors = (curses.COLOR_GREEN, curses.COLOR_YELLOW, curses.COLOR_RED, curses.COLOR_CYAN)
-    for i, c in enumerate(colors, 1):
-        curses.init_pair(i, c, -1)
-    curses.init_pair(5, curses.COLOR_BLACK, curses.COLOR_CYAN)
+    try:
+        curses.curs_set(0)
+    except curses.error:
+        pass  # terminal can't hide the cursor (vt100, serial console)
+    if curses.has_colors():
+        curses.use_default_colors()
+        colors = (curses.COLOR_GREEN, curses.COLOR_YELLOW, curses.COLOR_RED, curses.COLOR_CYAN)
+        for i, c in enumerate(colors, 1):
+            curses.init_pair(i, c, -1)
+        curses.init_pair(5, curses.COLOR_BLACK, curses.COLOR_CYAN)
     cp = curses.color_pair
     return {"": 0, "bold": curses.A_BOLD, "dim": curses.A_DIM, "good": cp(1), "warn": cp(2), "crit": cp(3),
             "title": cp(4) | curses.A_BOLD, "tab_on": cp(5) | curses.A_BOLD, "tab_off": curses.A_REVERSE}
 
 
 def put_line(scr, y, x, w, line, styles):
-    """Write one (text, style) line at (y, x), clipped to w columns."""
+    """Write one (text, style) line at (y, x), clipped to w columns. CJK and emoji take two columns, and
+    curses shows a control character as ^X: counting them as one would wrap the overflow onto the next row."""
     for text, style in line:
         if w <= 0:
             break
-        scr.addnstr(y, x, text, w, styles[style])
-        x += len(text)
-        w -= len(text)
+        used = 0
+        for i, c in enumerate(text):
+            cw = 2 if not c.isprintable() or unicodedata.east_asian_width(c) in "WF" else 1
+            if used + cw > w:
+                text = text[:i]
+                break
+            used += cw
+        scr.addstr(y, x, text, styles[style])
+        x += used
+        w -= used
 
 
 def draw(scr, tab, scroll, lines, styles):
@@ -403,17 +419,21 @@ def main(scr):
     comps = components()
     tab = scroll = 0
     show_all = False
+    shown = None
     prev = sample()
     time.sleep(0.2)
     cur = sample()
     while True:
         h, w = scr.getmaxyx()
-        if tab == 0:
-            lines = component_lines(comps, w)
-        elif tab == 1:
-            lines = usage_lines(w, prev, cur)
-        else:
-            lines = process_lines(w, prev, cur, show_all)
+        key = (tab, w, show_all, cur[0])
+        if key != shown:  # data changes once a second: don't rebuild on every key or tick
+            shown = key
+            if tab == 0:
+                lines = component_lines(comps, w)
+            elif tab == 1:
+                lines = usage_lines(w, prev, cur)
+            else:
+                lines = process_lines(w, prev, cur, show_all)
         scroll = max(0, min(scroll, len(lines) - (h - 2)))
         try:
             draw(scr, tab, scroll, lines, styles)
@@ -444,6 +464,10 @@ def main(scr):
 def check():
     assert deltas({"a": (1, 10)}, {"a": (4, 20), "b": (0, 0)}) == {"a": (3, 10)}
     assert human(1536) == "1.5 KB"
+    drawn = []
+    scr = type("Scr", (), {"addstr": lambda self, y, x, text, attr: drawn.append((x, text))})()
+    put_line(scr, 0, 0, 10, [("abc", ""), ("日本語日本語", ""), ("x", "")], {"": 0})
+    assert drawn == [(0, "abc"), (3, "日本語"), (9, "x")], "wide characters must be clipped by width, not length"
     a = sample()
     time.sleep(0.2)
     b = sample()
@@ -467,4 +491,7 @@ if __name__ == "__main__":
         import jtop_fun  # easter egg, not a real feature: see jtop_fun.py
         jtop_fun.run()
     else:
-        curses.wrapper(main)
+        try:
+            curses.wrapper(main)
+        except KeyboardInterrupt:
+            pass  # Ctrl-C quits like q, without a traceback

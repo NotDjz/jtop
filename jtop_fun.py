@@ -519,6 +519,8 @@ def run():
     print("\033[10;1t", end="", flush=True)  # ask the terminal for fullscreen; ignored where unsupported
     try:
         curses.wrapper(fun)
+    except KeyboardInterrupt:
+        pass  # Ctrl-C quits like q, without a traceback
     finally:
         print("\033[10;0t", end="", flush=True)
 
