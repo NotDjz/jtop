@@ -16,12 +16,12 @@ import random
 import sys
 import time
 
-from jtop import TABS, bar, component_lines, init_styles, put_line
+from jtop import TABS, bar, component_lines, put_line
 
-if sys.platform == "win32":  # same names and shapes, data from psutil: see jtop_win.py
-    from jtop_win import components, cpu_times, process_lines, sample, usage_lines
+if sys.platform == "win32":  # same names and shapes, data from psutil and Windows colors: see jtop_win.py
+    from jtop_win import components, cpu_times, init_styles, process_lines, sample, usage_lines
 else:
-    from jtop import components, cpu_times, process_lines, sample, usage_lines
+    from jtop import components, cpu_times, init_styles, process_lines, sample, usage_lines
 
 # A pane is a function (w, h, ctx) -> lines. Only the top-left pane and the CPU graph show real data.
 

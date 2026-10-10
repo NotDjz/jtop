@@ -8,6 +8,7 @@ Self-test: python jtop_win.py --check
 import ctypes
 import curses
 import functools
+import itertools
 import os
 import platform
 import struct
@@ -17,8 +18,8 @@ import winreg
 
 import psutil
 
-from jtop import (LABEL, TABS, bar, component_lines, cpu_percent, deltas, header, human, init_styles, level,
-                  put_line, row)
+from jtop import LABEL, TABS, component_lines, cpu_percent, deltas, header, human, level, put_line
+from jtop import init_styles as jtop_styles
 
 if sys.maxsize < 2 ** 32:
     sys.exit("jtop_win needs a 64-bit Python")  # the struct offsets below are the x64 layouts
@@ -180,7 +181,26 @@ def components():
 
 
 # ---------- layout: jtop.py's, fed by psutil ----------
-# ponytail: usage_lines, process_lines, draw and main copy jtop.py's so it stays untouched; share them if they drift
+# ponytail: bar, row, usage_lines, process_lines, draw and main copy jtop.py's so it stays untouched; share them if
+# they drift.
+
+def bar(label, pct, width, value=None, extra="", color=None):
+    """jtop.bar as a VU meter: each cell takes jtop.level's color at its end, so the hot end shows without reading
+    the number and the last cell matches level(pct). A forced color (battery: low charge is the bad end) stays one."""
+    pct = max(0.0, min(pct, 100.0))
+    value = value or f"{pct:5.1f}%"
+    extra = f" {extra:<24}" if extra else ""
+    n = max(width - len(label) - len(value) - len(extra) - 3, 5)
+    fill = round(n * pct / 100)
+    ends = (100 * i / n for i in range(1, fill + 1))  # where each filled cell ends, in %
+    cells = [("█" * len(list(g)), s) for s, g in itertools.groupby(color or level(e) for e in ends)]
+    return ([(label, "bold"), ("▕", "dim")] + cells +
+            [("░" * (n - fill), "dim"), ("▏", "dim"), (value + " ", "bold"), (extra, "dim")])
+
+
+def row(label, pct, w, value=None, extra=" ", color=None):
+    return bar(f"  {label[:LABEL - 3]:<{LABEL - 2}}", pct, w - 1, value, extra, color)
+
 
 def usage_lines(w, prev, cur):
     t0, _, dsk0, net0, _ = prev
@@ -232,8 +252,8 @@ def process_lines(w, prev, cur, show_all=False):
     procs.sort(reverse=True)  # busiest first, then biggest memory
 
     columns = f"{'PID':>7}  {'USER':<10} {'CPU%':>6} {'MEM%':>5} {'MEM':>9}  COMMAND"
-    title = f"Processes · all {len(procs)} · a: top 10" if show_all else f"Processes · top 10 of {len(procs)} · a: show all"
-    lines = [[], header(title, w), [(columns.ljust(w), "tab_off")]]
+    title = f"Processes  all {len(procs)}  a: top 10" if show_all else f"Processes  top 10 of {len(procs)}  a: show all"
+    lines = [[], header(title, w), [(columns.ljust(w), "title")]]  # tab_off is gray here, like the PIDs below
     for cpu, rss, (pid, ctime), name in procs if show_all else procs[:10]:
         user, cmd = owner(pid, ctime)
         lines.append([(f"{pid:>7}  ", "dim"), (f"{user[:10]:<10} ", ""), (f"{cpu:6.1f} ", level(cpu) if cpu else "dim"),
@@ -244,6 +264,18 @@ def process_lines(w, prev, cur, show_all=False):
 
 # ---------- curses ----------
 
+def init_styles():
+    """jtop's styles with a real gray: PDCurses ignores A_DIM, so secondary text was as bright as the data, and the
+    reversed tabs and footer outweighed it."""
+    styles = jtop_styles()
+    if curses.has_colors() and curses.COLORS >= 16:
+        # bright black, from the constant: PDCurses numbers colors like the Windows console (red 4, not 1)
+        curses.init_pair(6, curses.COLOR_BLACK + 8, -1)
+        gray = curses.color_pair(6)
+        styles.update(dim=gray, tab_off=gray, tab_on=styles["title"] | curses.A_UNDERLINE)
+    return styles
+
+
 def draw(scr, tab, scroll, lines, styles):
     scr.erase()
     h, w = scr.getmaxyx()
@@ -252,14 +284,14 @@ def draw(scr, tab, scroll, lines, styles):
         label = f" {i + 1} {name} "
         scr.addnstr(0, x, label, max(w - x, 0), styles["tab_on" if i == tab else "tab_off"])
         x += len(label) + 1
-    info = f"host {platform.node()} · uptime {uptime()} · {time.strftime('%H:%M:%S')} "
+    info = f"host {platform.node()}  uptime {uptime()}  {time.strftime('%H:%M:%S')} "
     if w - len(info) > x:
         scr.addstr(0, w - len(info), info, styles["dim"])
 
     for y, line in enumerate(lines[scroll:scroll + h - 2], 1):
         put_line(scr, y, 0, w, line, styles)
 
-    footer = " Tab switch · ↑↓ scroll · q quit"
+    footer = " Tab switch   ↑↓ scroll   q quit"
     scr.addnstr(h - 1, 0, footer.ljust(w), w - 1, styles["tab_off"])
     scr.refresh()
 
@@ -320,6 +352,10 @@ def check():
     act, tot = deltas(a[1], b[1])["cpu"]
     assert 0 <= act <= tot
     assert tot > 1000, "CPU times in seconds: jtop.cpu_percent's floor of 1 would cap the bars"
+    vu = lambda pct, width=104, color=None: [s for t, s in bar("", pct, width, color=color) if "█" in t]
+    assert vu(90) == ["good", "warn", "crit"] and vu(50) == ["good"], "VU meter zones"
+    assert all(vu(p, w)[-1] == level(p) for p in (30, 70, 87, 100) for w in (20, 104)), "last cell != level(pct)"
+    assert vu(90, color="warn") == ["warn"], "a forced color must stay one color"
     assert any(pid == os.getpid() and name.lower().startswith("python")
                for (pid, _), (name, _, _) in b[4].items()), "process snapshot misread"
     procs = process_lines(120, a, b, show_all=True)
