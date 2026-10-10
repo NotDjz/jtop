@@ -1,0 +1,3 @@
+# LF even in a Windows checkout: build.sh runs on Linux and packs jtop.py, whose shebang breaks with CRLF
+*.sh text eol=lf
+*.py text eol=lf

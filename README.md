@@ -5,7 +5,7 @@ Three tabs: **Components** (CPU, memory, motherboard, GPU, battery, disks, netwo
 (per-core CPU, RAM/swap, disk and network throughput, filesystems, temperatures, battery)
 and **Processes** (sorted by CPU, with memory, user and command).
 
-Linux: Python 3 standard library, no dependencies. Windows 11: see [below](#windows-11).
+Linux: Python 3 standard library, no dependencies, installs with apt. Windows 11: installs with [pipx](#install-windows-11).
 
 ![Components tab](screenshots/components.png)
 
@@ -26,14 +26,17 @@ Then run `jtop`. Updates come with `sudo apt upgrade`.
 
 For fun: `jtop --fun`
 
-## Windows 11
+## Install (Windows 11)
 
-From a clone of this repository, with a 64-bit Python 3:
+With a 64-bit Python 3, git and [pipx](https://pipx.pypa.io):
 
 ```powershell
-pip install psutil windows-curses
-python jtop_win.py
+pipx install git+https://github.com/NotDjz/jtop
 ```
 
-Same tabs and keys, and `python jtop_win.py --fun` for fun. No temperatures, which Windows does not expose without a driver.
-Without administrator rights, system processes show `?` as their user and their name instead of their command line.
+Then run `jtop`. Updates come with `pipx upgrade jtop`.
+
+For fun: `jtop --fun`
+
+No temperatures, which Windows does not expose without a driver. Without administrator rights, system processes
+show `?` as their user and their name instead of their command line.

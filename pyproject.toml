@@ -1,0 +1,20 @@
+# pipx install for Windows (see README). Linux installs with apt (build.sh).
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jtop"
+version = "1.3.0"  # also the .deb version: build.sh reads it
+description = "Hardware components and live usage in your terminal, htop style"
+requires-python = ">=3.8"
+dependencies = [
+    "psutil; sys_platform == 'win32'",
+    "windows-curses; sys_platform == 'win32'",
+]
+
+[project.scripts]
+jtop = "jtop_win:cli"
+
+[tool.setuptools]
+py-modules = ["jtop", "jtop_win", "jtop_fun"]

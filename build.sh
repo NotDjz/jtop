@@ -1,10 +1,10 @@
 #!/bin/sh
 # Build the .deb and refresh the signed APT repo in docs/ (served by GitHub Pages).
-# Release a new version: bump VERSION, run ./build.sh, commit, push.
+# Release a new version: bump version in pyproject.toml, run ./build.sh, commit, push.
 set -e
-VERSION=1.2.3
 KEY=notdjz@users.noreply.github.com
 cd "$(dirname "$0")"
+VERSION=$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')
 
 pkg=$(mktemp -d)
 install -Dm755 jtop.py "$pkg/usr/lib/jtop/jtop.py"

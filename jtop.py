@@ -486,7 +486,7 @@ def check():
 
 if __name__ == "__main__":
     if sys.platform == "win32":
-        sys.exit("jtop.py is the Linux version: on Windows, run python jtop_win.py")
+        sys.exit("jtop.py is the Linux version: on Windows, install jtop with pipx and run jtop (see README)")
     if "--check" in sys.argv:
         check()
     elif "--fun" in sys.argv or "-fun" in sys.argv:

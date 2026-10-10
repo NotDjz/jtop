@@ -1,10 +1,18 @@
 #!/usr/bin/env python3
 """jtop for Windows: same tabs and keys as jtop.py, data from psutil, the registry and one Win32 call.
 
-Needs: pip install psutil windows-curses
+Install: pipx install git+https://github.com/NotDjz/jtop, which brings psutil and windows-curses.
 Keys: Tab switch, ↑ ↓ scroll, q quit.
-Self-test: python jtop_win.py --check
+Self-test: jtop --check (from a clone: python jtop_win.py --check)
 """
+import sys
+
+# before the Windows-only imports: pipx would also install the jtop command on Linux, over the apt one
+if sys.platform != "win32":
+    sys.exit("jtop_win needs Windows. On Linux, jtop installs with apt (see README): run pipx uninstall jtop")
+if sys.maxsize < 2 ** 32:
+    sys.exit("jtop_win needs a 64-bit Python")  # the struct offsets below are the x64 layouts
+
 import ctypes
 import curses
 import functools
@@ -12,7 +20,6 @@ import itertools
 import os
 import platform
 import struct
-import sys
 import time
 import winreg
 
@@ -20,9 +27,6 @@ import psutil
 
 from jtop import LABEL, TABS, component_lines, cpu_percent, deltas, header, human, level, put_line
 from jtop import init_styles as jtop_styles
-
-if sys.maxsize < 2 ** 32:
-    sys.exit("jtop_win needs a 64-bit Python")  # the struct offsets below are the x64 layouts
 
 GPU_CLASS = r"SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}"
 NET_CLASS = r"SYSTEM\CurrentControlSet\Control\Class\{4d36e972-e325-11ce-bfc1-08002be10318}"
@@ -369,7 +373,7 @@ def check():
     print("ok")
 
 
-if __name__ == "__main__":
+def cli():  # the jtop command installed by pipx: see pyproject.toml
     if "--check" in sys.argv:
         check()
     elif "--fun" in sys.argv or "-fun" in sys.argv:
@@ -380,3 +384,7 @@ if __name__ == "__main__":
             curses.wrapper(main)
         except KeyboardInterrupt:
             pass  # Ctrl-C quits like q, without a traceback
+
+
+if __name__ == "__main__":
+    cli()
