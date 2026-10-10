@@ -4,7 +4,7 @@
 A fake "Hollywood hacker" screen: a grid of panes spamming fake processes hacks, fake network
 requests, random hexdumps, Matrix rain, fake password cracking and a fake build log.
 
-To remove it: delete this file and the `--fun` branch at the bottom of jtop.py.
+To remove it: delete this file and the `--fun` branches at the bottom of jtop.py and jtop_win.py.
 Self-test: python3 jtop_fun.py --check
 """
 import collections
@@ -16,8 +16,12 @@ import random
 import sys
 import time
 
-from jtop import (TABS, bar, component_lines, components, cpu_times, init_styles, process_lines, put_line,
-                  sample, usage_lines)
+from jtop import TABS, bar, component_lines, init_styles, put_line
+
+if sys.platform == "win32":  # same names and shapes, data from psutil: see jtop_win.py
+    from jtop_win import components, cpu_times, process_lines, sample, usage_lines
+else:
+    from jtop import components, cpu_times, process_lines, sample, usage_lines
 
 # A pane is a function (w, h, ctx) -> lines. Only the top-left pane and the CPU graph show real data.
 
@@ -278,7 +282,7 @@ def loader():
 def hacker_typer():
     """Types out jtop's own source, fast, with a blinking cursor. Real code, like hackertyper.net."""
     try:
-        src = open(os.path.join(os.path.dirname(os.path.realpath(__file__)), "jtop.py")).read()
+        src = open(os.path.join(os.path.dirname(os.path.realpath(__file__)), "jtop.py"), encoding="utf-8").read()
     except OSError:
         src = "print('hack the planet')\n" * 50
     src = src.expandtabs(4)
@@ -516,13 +520,15 @@ def fun(scr):
 
 
 def run():
-    print("\033[10;1t", end="", flush=True)  # ask the terminal for fullscreen; ignored where unsupported
+    # ask the terminal for fullscreen; ignored where unsupported, but a Windows console without VT mode prints it as text
+    enter, leave = ("", "") if sys.platform == "win32" else ("\033[10;1t", "\033[10;0t")
+    print(enter, end="", flush=True)
     try:
         curses.wrapper(fun)
     except KeyboardInterrupt:
         pass  # Ctrl-C quits like q, without a traceback
     finally:
-        print("\033[10;0t", end="", flush=True)
+        print(leave, end="", flush=True)
 
 
 def check():

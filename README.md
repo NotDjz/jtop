@@ -35,5 +35,5 @@ pip install psutil windows-curses
 python jtop_win.py
 ```
 
-Same tabs and keys. No temperatures, which Windows does not expose without a driver, and no `--fun` yet.
+Same tabs and keys, and `python jtop_win.py --fun` for fun. No temperatures, which Windows does not expose without a driver.
 Without administrator rights, system processes show `?` as their user and their name instead of their command line.

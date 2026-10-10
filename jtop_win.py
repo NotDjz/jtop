@@ -336,6 +336,9 @@ def check():
 if __name__ == "__main__":
     if "--check" in sys.argv:
         check()
+    elif "--fun" in sys.argv or "-fun" in sys.argv:
+        import jtop_fun  # easter egg, not a real feature: see jtop_fun.py
+        jtop_fun.run()
     else:
         try:
             curses.wrapper(main)
