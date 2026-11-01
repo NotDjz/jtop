@@ -28,7 +28,12 @@ For fun: `jtop --fun`
 
 ## Install (Windows 11)
 
-With a 64-bit Python 3, git and [pipx](https://pipx.pypa.io):
+Download `jtop.exe` from the [latest release](https://github.com/NotDjz/jtop/releases/latest) and run it: nothing
+else to install. The exe is not signed, so SmartScreen may warn the first time: More info, then Run anyway.
+A new version means downloading the new exe. It has the jtop icon: right-click it to pin it to Start or the
+taskbar. For fun: `jtop.exe --fun` from a terminal in its folder.
+
+Or, with a 64-bit Python 3, git and [pipx](https://pipx.pypa.io), which also brings updates:
 
 ```powershell
 pipx install git+https://github.com/NotDjz/jtop
@@ -36,7 +41,7 @@ pipx install git+https://github.com/NotDjz/jtop
 
 Then run `jtop`. Updates come with `pipx upgrade jtop`.
 
-To get a Start menu entry with an icon, which you can then pin to the taskbar:
+To get a Start menu entry with an icon for the pipx install, which you can then pin to the taskbar:
 
 ```powershell
 irm https://raw.githubusercontent.com/NotDjz/jtop/main/shortcut.ps1 | iex

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """jtop for Windows: same tabs and keys as jtop.py, data from psutil, the registry and one Win32 call.
 
-Install: pipx install git+https://github.com/NotDjz/jtop, which brings psutil and windows-curses.
+Install: jtop.exe from the GitHub releases (built by build_win.ps1), or pipx install git+https://github.com/NotDjz/jtop,
+which brings psutil and windows-curses.
 Keys: Tab switch, ↑ ↓ scroll, q quit.
 Self-test: jtop --check (from a clone: python jtop_win.py --check)
 """
@@ -363,7 +364,7 @@ def check():
     assert vu(90) == ["good", "warn", "crit"] and vu(50) == ["good"], "VU meter zones"
     assert all(vu(p, w)[-1] == level(p) for p in (30, 70, 87, 100) for w in (20, 104)), "last cell != level(pct)"
     assert vu(90, color="warn") == ["warn"], "a forced color must stay one color"
-    assert any(pid == os.getpid() and name.lower().startswith("python")
+    assert any(pid == os.getpid() and name.lower().startswith(("python", "jtop"))  # jtop.exe: build_win.ps1
                for (pid, _), (name, _, _) in b[4].items()), "process snapshot misread"
     procs = process_lines(120, a, b, show_all=True)
     assert any(str(os.getpid()) in "".join(t for t, _ in l) for l in procs), "own process missing"
