@@ -8,6 +8,7 @@ import curses
 import functools
 import os
 import re
+import struct
 import sys
 import time
 import unicodedata
@@ -172,6 +173,55 @@ def pci_name(pci_id):
     return None
 
 
+DDR = {0x12: "DDR", 0x13: "DDR2", 0x18: "DDR3", 0x1A: "DDR4", 0x1B: "LPDDR", 0x1C: "LPDDR2", 0x1D: "LPDDR3", 0x1E: "LPDDR4", 0x22: "DDR5",
+       0x23: "LPDDR5"}  # SMBIOS memory types
+
+
+def memory_modules(table):
+    """[(slot, '16.0 GB  DDR5  5200 MT/s  maker part')] from the memory devices (type 17) of a raw SMBIOS table.
+    Each structure is a formatted area of its stated length, then strings ending at a double NUL."""
+    out, i = [], 0
+    while i + 4 <= len(table) and table[i] != 127:  # 127: end of table
+        n = table[i + 1]
+        end = table.find(b"\0\0", i + n)
+        if n < 4 or end < 0:
+            break  # truncated
+        if table[i] == 17 and n >= 0x1B:  # up to the part number, SMBIOS 2.3
+            out += memory_module(table[i:i + n], table[i + n:end].split(b"\0"))
+        i = end + 2
+    return out
+
+
+def smbios_field(s, word, dword):
+    """The WORD at word, or the DWORD at dword when the WORD says 0xFFFF (SMBIOS 3.x). 0 past the structure's end."""
+    v = struct.unpack_from("<H", s, word)[0] if len(s) >= word + 2 else 0
+    if v == 0xFFFF:
+        v = struct.unpack_from("<I", s, dword)[0] if len(s) >= dword + 4 else 0
+    return v
+
+
+def module_size(s):
+    """Bytes of one type 17 structure, 0 for an empty slot or an unknown size."""
+    size = struct.unpack_from("<H", s, 0x0C)[0]
+    if size == 0x7FFF:  # 32 GB or more: the extended size, in MB
+        return (struct.unpack_from("<I", s, 0x1C)[0] & 0x7FFFFFFF if len(s) >= 0x20 else 0) * 2 ** 20
+    if size == 0xFFFF:
+        return 0
+    return (size & 0x7FFF) * 1024 if size & 0x8000 else size * 2 ** 20  # bit 15: in KB
+
+
+def memory_module(s, strings):
+    """[(slot, text)] for one type 17 structure, [] for an empty slot. Speeds are in MT/s, like DDR5-5200."""
+    text = lambda k: strings[s[k] - 1].decode("ascii", "replace").strip() if 0 < s[k] <= len(strings) else ""
+    size = module_size(s)
+    if not size:
+        return []
+    # configured speed, else the module's max; before SMBIOS 2.8 (shorter than 0x28), 0x20 was a clock in MHz
+    speed = len(s) >= 0x28 and smbios_field(s, 0x20, 0x58) or smbios_field(s, 0x15, 0x54)
+    parts = [human(size), DDR.get(s[0x12], ""), f"{speed} MT/s" if speed else "", f"{text(0x17)} {text(0x1A)}".strip()]
+    return [(text(0x10) or "DIMM", "  ".join(p for p in parts if p))]
+
+
 def uptime():
     s = float(read("/proc/uptime", "0").split()[0])
     return f"{int(s // 86400)}d {int(s % 86400 // 3600)}h {int(s % 3600 // 60):02}m"
@@ -185,6 +235,10 @@ def components():
     fmax = read(sysd / "cpu0/cpufreq/cpuinfo_max_freq")
     mem = meminfo()
     dmi = lambda f: read(f"/sys/class/dmi/id/{f}", "?")
+    try:
+        smbios = Path("/sys/firmware/dmi/tables/DMI").read_bytes()
+    except OSError:
+        smbios = b""  # root only: the module rows show under sudo
 
     out = [
         ("Processor", [
@@ -193,7 +247,8 @@ def components():
             ("Max frequency", f"{int(fmax) / 1e6:.2f} GHz" if fmax else "?"),
             ("Architecture", os.uname().machine),
         ]),
-        ("Memory", [("RAM", human(mem["MemTotal"])), ("Swap", human(mem.get("SwapTotal", 0)))]),
+        ("Memory", [("RAM", human(mem["MemTotal"])), *memory_modules(smbios),
+                    ("Swap", human(mem.get("SwapTotal", 0)))]),
         ("System", [
             ("Machine", f"{dmi('sys_vendor')} {dmi('product_name')}"),
             ("Motherboard", f"{dmi('board_vendor')} {dmi('board_name')}"),
@@ -267,7 +322,7 @@ def component_lines(comps, w):
     lines = []
     for section, items in comps:
         lines += [[], header(section, w)]
-        lines += [[(f"  {k:<18}", "dim"), (str(v), "")] for k, v in items]
+        lines += [[(f"  {k:<17} ", "dim"), (str(v), "")] for k, v in items]  # a long slot name stays apart
     return lines
 
 
@@ -468,6 +523,25 @@ def check():
     scr = type("Scr", (), {"addstr": lambda self, y, x, text, attr: drawn.append((x, text))})()
     put_line(scr, 0, 0, 10, [("abc", ""), ("日本語日本語", ""), ("x", "")], {"": 0})
     assert drawn == [(0, "abc"), (3, "日本語"), (9, "x")], "wide characters must be clipped by width, not length"
+
+    def dimm(size, speed=5200, ext_size=0, ext_speed=0, conf=None, n=0x5C):  # SMBIOS type 17, strings 1-3
+        s = bytearray(0x5C)
+        s[0:2] = 17, n  # n: 0x5C for SMBIOS 3.x, 0x22 for 2.7
+        struct.pack_into("<H", s, 0x0C, size)
+        s[0x10], s[0x12], s[0x17], s[0x1A] = 1, 0x22, 2, 3  # locator, DDR5, manufacturer, part number
+        struct.pack_into("<H", s, 0x15, speed)
+        struct.pack_into("<IH", s, 0x1C, ext_size, speed if conf is None else conf)  # extended size, configured
+        struct.pack_into("<I", s, 0x58, ext_speed)  # extended configured speed
+        return bytes(s[:n]) + b"DIMM0\0Corsair\0CMK64GX5M4B5600C36\0\0"
+    end = bytes([127, 4, 0, 0]) + b"\0\0"
+    assert memory_modules(dimm(16384) + dimm(0) + end) == [
+        ("DIMM0", "16.0 GB  DDR5  5200 MT/s  Corsair CMK64GX5M4B5600C36")], "empty slot must be skipped"
+    assert memory_modules(dimm(0x7FFF, ext_size=65536))[0][1].startswith("64.0 GB"), "extended size, in MB"
+    assert memory_modules(dimm(0x7FFF, ext_size=1 << 31 | 65536))[0][1].startswith("64.0 GB"), "bit 31 reserved"
+    assert "1600 MT/s" in memory_modules(dimm(4096, 1600, conf=800, n=0x22))[0][1], "before 2.8, 0x20 is in MHz"
+    assert memory_modules(dimm(0x8000 | 512))[0][1].startswith("512.0 KB"), "bit 15: size in KB"
+    assert "8800 MT/s" in memory_modules(dimm(16384, 0xFFFF, ext_speed=8800))[0][1], "extended speed"
+    assert memory_modules(b"") == [] and memory_modules(dimm(16384)[:30]) == [], "truncated table"
     a = sample()
     time.sleep(0.2)
     b = sample()

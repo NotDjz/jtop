@@ -25,12 +25,13 @@ import winreg
 
 import psutil
 
-from jtop import LABEL, TABS, component_lines, cpu_percent, deltas, header, human, level, put_line
+from jtop import LABEL, TABS, component_lines, cpu_percent, deltas, header, human, level, memory_modules, put_line
 from jtop import init_styles as jtop_styles
 
 GPU_CLASS = r"SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}"
 NET_CLASS = r"SYSTEM\CurrentControlSet\Control\Class\{4d36e972-e325-11ce-bfc1-08002be10318}"
 CONNECTIONS = r"SYSTEM\CurrentControlSet\Control\Network\{4D36E972-E325-11CE-BFC1-08002BE10318}"
+SMBIOS = r"SYSTEM\CurrentControlSet\Services\mssmbios\Data"  # the raw SMBIOS table, readable without admin
 
 ntdll = ctypes.WinDLL("ntdll")
 
@@ -151,7 +152,9 @@ def components():
             ("Base frequency", f"{mhz / 1000:.2f} GHz" if mhz else "?"),  # the max needs a driver on Windows
             ("Architecture", platform.machine()),
         ]),
-        ("Memory", [("RAM", human(psutil.virtual_memory().total)), ("Swap", human(psutil.swap_memory().total))]),
+        ("Memory", [("RAM", human(psutil.virtual_memory().total)),
+                    *memory_modules(reg(SMBIOS, "SMBiosData", b"")[8:]),  # after the RawSMBIOSData header
+                    ("Swap", human(psutil.swap_memory().total))]),
         ("System", [
             ("Machine", f"{bios('SystemManufacturer')} {bios('SystemProductName')}"),
             ("Motherboard", f"{bios('BaseBoardManufacturer')} {bios('BaseBoardProduct')}"),
