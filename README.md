@@ -36,6 +36,12 @@ pipx install git+https://github.com/NotDjz/jtop
 
 Then run `jtop`. Updates come with `pipx upgrade jtop`.
 
+To get a Start menu entry with an icon, which you can then pin to the taskbar:
+
+```powershell
+irm https://raw.githubusercontent.com/NotDjz/jtop/main/shortcut.ps1 | iex
+```
+
 For fun: `jtop --fun`
 
 No temperatures, which Windows does not expose without a driver. Without administrator rights, system processes
