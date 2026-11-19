@@ -1,0 +1,36 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <!-- Id derives a stable UpgradeCode: never change it, or a newer MSI installs beside the old one
+       instead of replacing it. Per user: no admin prompt, and the PATH entry goes to the user's own
+       environment. -->
+  <Package Id="NotDjz.jtop" Name="jtop" Manufacturer="NotDjz" Version="$(var.Version)" Scope="perUser">
+    <MajorUpgrade AllowSameVersionUpgrades="yes"
+                  DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="ProgramsFolder" Name="Programs">
+        <Directory Id="INSTALLFOLDER" Name="jtop" />
+      </Directory>
+    </StandardDirectory>
+
+    <!-- A per-user component needs an HKCU KeyPath and its folders removed on uninstall (ICE38,
+         ICE64). A file plus a registry KeyPath cannot get a generated Guid: this one is fixed, never
+         change it. -->
+    <Component Directory="INSTALLFOLDER" Guid="86254823-8704-4256-822C-6511AF3D16D7">
+      <File Id="App" Source="dist\jtop.exe" KeyPath="no">
+        <Shortcut Name="jtop" Directory="ProgramMenuFolder" WorkingDirectory="INSTALLFOLDER"
+                  Description="Hardware components and live usage, htop style" />
+      </File>
+      <!-- jtop is a terminal command: put it on the user's PATH. Uninstall takes the entry back out. -->
+      <Environment Id="Path" Name="PATH" Value="[INSTALLFOLDER]" Part="last" Action="set" System="no"
+                   Permanent="no" />
+      <RegistryValue Root="HKCU" Key="Software\NotDjz\jtop" Name="Installed" Type="integer" Value="1"
+                     KeyPath="yes" />
+      <RemoveFolder Id="RemoveInstallFolder" On="uninstall" />
+      <RemoveFolder Id="RemoveProgramsFolder" Directory="ProgramsFolder" On="uninstall" />
+    </Component>
+
+    <Icon Id="jtop.ico" SourceFile="jtop.ico" />
+    <Property Id="ARPPRODUCTICON" Value="jtop.ico" />
+  </Package>
+</Wix>

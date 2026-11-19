@@ -1,7 +1,8 @@
 #Requires -Version 7.2
-# Builds dist\jtop.exe (Python, psutil and windows-curses inside) and publishes it in the GitHub release
-# v<VERSION>, the Windows counterpart of build.sh. Needs PyInstaller, psutil and windows-curses under `python`,
-# and gh logged in. -NoPublish stops after the self-test. Running it again replaces the release's jtop.exe.
+# Builds dist\jtop.exe (Python, psutil and windows-curses inside) and the per-user installer
+# dist\jtop-<VERSION>-x64.msi, and publishes both in the GitHub release v<VERSION>, the Windows counterpart of
+# build.sh. Needs PyInstaller, psutil and windows-curses under `python`, WiX 7 (dotnet tool install -g wix), and gh
+# logged in. -NoPublish stops before GitHub. Running it again replaces the release's two files.
 param([switch]$NoPublish)
 $ErrorActionPreference = "Stop"
 $root = $PSScriptRoot
@@ -16,6 +17,12 @@ if ($LASTEXITCODE) { throw "PyInstaller failed" }
 $check = & "$root\dist\jtop.exe" --check 2>&1
 if ("$check".Trim() -ne "ok") { throw "dist\jtop.exe --check failed: $check" }
 "dist\jtop.exe ${version}: ok"
+
+# the .wxs names its files relative to the repo root: -bindpath, so this runs from any folder
+$msi = "$root\dist\jtop-$version-x64.msi"
+wix build "$root\installer\jtop.wxs" -arch x64 -d Version=$version -bindpath $root -o $msi
+if ($LASTEXITCODE) { throw "wix build failed" }
+"dist\jtop-$version-x64.msi: ok"
 if ($NoPublish) { return }
 
 # the tag must point at the code the exe was built from
@@ -26,9 +33,9 @@ if (-not (git -C $root branch -r --contains $head)) { throw "HEAD is not pushed:
 
 gh release view "v$version" -R NotDjz/jtop *> $null
 if ($LASTEXITCODE) {
-    gh release create "v$version" "$root\dist\jtop.exe" -R NotDjz/jtop --target $head --title "jtop $version" `
+    gh release create "v$version" "$root\dist\jtop.exe" $msi -R NotDjz/jtop --target $head --title "jtop $version" `
         --generate-notes
 } else {
-    gh release upload "v$version" "$root\dist\jtop.exe" -R NotDjz/jtop --clobber
+    gh release upload "v$version" "$root\dist\jtop.exe" $msi -R NotDjz/jtop --clobber
 }
 if ($LASTEXITCODE) { throw "gh release failed" }

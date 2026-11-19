@@ -33,6 +33,11 @@ else to install. The exe is not signed, so SmartScreen may warn the first time: 
 A new version means downloading the new exe. It has the jtop icon: right-click it to pin it to Start or the
 taskbar. For fun: `jtop.exe --fun` from a terminal in its folder.
 
+Or take `jtop-<version>-x64.msi` from the same release and double-click it: it installs for your account only (no
+admin prompt) into `%LOCALAPPDATA%\Programs\jtop`, adds jtop to the Start menu, and puts the `jtop` command on your
+PATH, so `jtop` and `jtop --fun` work in any new terminal. A newer MSI replaces the older one. Uninstall it from
+Settings > Apps. Use the MSI or pipx below, not both: each adds its own `jtop` to the PATH and to the Start menu.
+
 Or, with a 64-bit Python 3, git and [pipx](https://pipx.pypa.io), which also brings updates:
 
 ```powershell
